@@ -1,21 +1,22 @@
-// Only activates when the tab *is* an image — i.e. you navigated directly to
-// an image URL and Chrome rendered its built-in single-image viewer
-// (document.contentType is "image/..." in that case). Regular web pages that
-// merely embed <img> tags are left alone entirely.
+// Detects images on every page (for the popup's list), but only *converts*
+// an image to a live video stream when the tab itself is a directly-opened
+// image — i.e. Chrome's built-in single-image viewer, where
+// document.contentType starts with "image/". Regular pages that merely
+// embed <img> tags get detected and listed, but left untouched.
 (function () {
   if (window.__rtxHdrBoosterInstalled) return;
   window.__rtxHdrBoosterInstalled = true;
 
-  if (!document.contentType || !document.contentType.startsWith("image/")) {
-    return; // not a directly-opened image — do nothing on this page
-  }
+  const isImagePage = !!(document.contentType && document.contentType.startsWith("image/"));
 
   const MIN_AREA = 40000; // skip tiny icons/avatars
   let totalConverted = 0;
 
   // Registry of every image we've looked at, keyed by src — powers the
   // popup's "detected images" list. status is one of:
-  //   "converted" | "blocked" | "pending"
+  //   "converted" | "blocked" | "pending" | "detected"
+  // ("detected" = found on a regular page, never attempted — conversion
+  // only runs on image pages.)
   const registry = new Map();
 
   function setStatus(src, patch) {
@@ -122,6 +123,17 @@
     if (img.naturalWidth * img.naturalHeight < MIN_AREA) return;
 
     img.dataset.rtxHdrDone = "1"; // mark before the async CORS retry can land
+
+    if (!isImagePage) {
+      // Regular page: list it for the popup, but never convert.
+      setStatus(img.src, {
+        width: img.naturalWidth,
+        height: img.naturalHeight,
+        status: "detected",
+      });
+      return;
+    }
+
     setStatus(img.src, {
       width: img.naturalWidth,
       height: img.naturalHeight,
@@ -167,7 +179,7 @@
     }
 
     if (msg.type === "rtx-hdr-get-images") {
-      sendResponse({ images: Array.from(registry.values()) });
+      sendResponse({ images: Array.from(registry.values()), isImagePage });
       return;
     }
   });

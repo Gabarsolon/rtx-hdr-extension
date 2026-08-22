@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "RTX HDR Image Booster",
-  "version": "3.1",
-  "description": "When you open an image directly in a tab, turns it into a live canvas-stream video so RTX Video HDR tone-maps it like real video.",
+  "version": "3.2",
+  "description": "Lists images found on any page in a popup, and turns directly-opened images into live canvas-stream video so RTX Video HDR tone-maps them like real video.",
   "host_permissions": ["<all_urls>"],
   "action": {
     "default_title": "RTX HDR Image Booster — view detected images",

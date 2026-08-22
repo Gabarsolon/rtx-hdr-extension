@@ -84,10 +84,19 @@
   .badge.converted { background: #1f3a1a; color: #7ee081; }
   .badge.blocked { background: #3a1f1f; color: #e08181; }
   .badge.pending { background: #3a361f; color: #e0d081; }
+  .badge.detected { background: #23262d; color: #9aa0aa; }
   #empty {
     padding: 24px 12px;
     text-align: center;
     color: #8b8f98;
+  }
+  #hint {
+    display: none;
+    padding: 8px 12px;
+    font-size: 11.5px;
+    color: #9aa0aa;
+    background: #1c1f26;
+    border-bottom: 1px solid #2a2d34;
   }
 </style>
 </head>
@@ -96,6 +105,7 @@
     <h1>RTX HDR Image Booster</h1>
     <button id="rescan">Rescan</button>
   </header>
+  <div id="hint">These images are only <strong>listed</strong>, not converted — open one directly (click a row) to actually HDR-ify it.</div>
   <div class="count" id="count" style="padding: 6px 12px;"></div>
   <ul id="list"></ul>
   <div id="empty" style="display:none;">No images detected on this tab yet.</div>

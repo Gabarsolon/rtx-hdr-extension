@@ -2,12 +2,14 @@ const listEl = document.getElementById("list");
 const emptyEl = document.getElementById("empty");
 const countEl = document.getElementById("count");
 const rescanBtn = document.getElementById("rescan");
+const hintEl = document.getElementById("hint");
 
 let activeTabId = null;
 
 function statusLabel(item) {
   if (item.status === "converted") return { text: "HDR", cls: "converted" };
   if (item.status === "blocked") return { text: "blocked", cls: "blocked" };
+  if (item.status === "detected") return { text: "found", cls: "detected" };
   return { text: "pending", cls: "pending" };
 }
 
@@ -21,8 +23,11 @@ function filenameOf(src) {
   }
 }
 
-function render(images) {
+function render(images, isImagePage) {
   listEl.innerHTML = "";
+  emptyEl.textContent = "No images detected on this tab yet.";
+
+  hintEl.style.display = isImagePage ? "none" : "block";
 
   if (!images || images.length === 0) {
     emptyEl.style.display = "block";
@@ -33,7 +38,9 @@ function render(images) {
 
   const converted = images.filter((i) => i.status === "converted").length;
   const blocked = images.filter((i) => i.status === "blocked").length;
-  countEl.textContent = `${images.length} detected · ${converted} converted · ${blocked} blocked`;
+  countEl.textContent = isImagePage
+    ? `${images.length} detected · ${converted} converted · ${blocked} blocked`
+    : `${images.length} detected · click one to open it directly`;
 
   for (const item of images) {
     const li = document.createElement("li");
@@ -78,13 +85,13 @@ function loadImages() {
   chrome.tabs.sendMessage(activeTabId, { type: "rtx-hdr-get-images" }, (resp) => {
     if (chrome.runtime.lastError) {
       countEl.textContent = "";
-      emptyEl.textContent =
-        "This only activates when a tab is a directly-opened image (not a regular page with images embedded in it). Right-click an image → \"Open image in new tab\" to use it.";
+      hintEl.style.display = "none";
+      emptyEl.textContent = "Can't reach this page (extension pages, chrome:// tabs, or a page loaded before install).";
       emptyEl.style.display = "block";
       listEl.innerHTML = "";
       return;
     }
-    render(resp && resp.images);
+    render(resp && resp.images, resp && resp.isImagePage);
   });
 }
 
