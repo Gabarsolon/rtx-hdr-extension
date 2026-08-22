@@ -1,6 +1,8 @@
 # RTX HDR Image Booster
 
-Runs automatically on every page: it swaps every sufficiently large `<img>` for a `<video>` element backed by a live `canvas.captureStream()` of that image. Since it's a real `<video>`, RTX Video HDR (which only watches for video elements) picks it up and tone-maps it. It also watches the page for new images (infinite scroll, lazy-loading, SPA navigation) and converts those as they appear.
+Activates only when a tab **is** an image — i.e. you navigated directly to an image URL (or opened one via right-click → "Open image in new tab") and Chrome rendered its built-in single-image viewer. It swaps that image for a `<video>` element backed by a live `canvas.captureStream()` of it. Since it's a real `<video>`, RTX Video HDR (which only watches for video elements) picks it up and tone-maps it.
+
+It does **not** activate on regular web pages that merely embed `<img>` tags among other content — only on the direct single-image view.
 
 ## Install (unpacked, since it's not on the Chrome Web Store)
 
@@ -14,7 +16,9 @@ Chrome will show a "Read and change all your data on all websites you visit" per
 
 ## Use
 
-Just browse. It converts eligible images on its own; the badge shows how many it's converted on the current tab so far. Click the toolbar icon to open a popup listing every detected image on the page — thumbnail, dimensions, and status (`HDR` converted / `blocked` / `pending`, hover a `blocked` badge for the reason). Click any row to open that image's original URL in a new tab. The popup's **Rescan** button forces a fresh pass (useful if a site's own lazy-loading dodges the automatic watcher).
+Open an image directly in a tab (paste its URL, or right-click any image on a page → "Open image in new tab"). It converts on its own; the badge shows the conversion count. Click the toolbar icon to open a popup showing the detected image — thumbnail, dimensions, and status (`HDR` converted / `blocked` / `pending`, hover a `blocked` badge for the reason). Click the row to open the original URL in a new tab. The popup's **Rescan** button forces a fresh pass.
+
+On a regular page (not a direct image view), the popup will say so — that's expected, the extension is intentionally inert there.
 
 ## Open question: does RTX Video HDR actually engage on these?
 
@@ -31,8 +35,6 @@ What still won't convert:
 
 ## Notes / limits
 
-- Skips small images (icons, avatars) under ~40,000px² to avoid junk conversions.
+- Only activates on `document.contentType` starting with `image/` — Chrome's marker for "this tab is literally an image file," not an HTML page that happens to contain images.
 - Won't double-convert the same image.
-- Badge count only reflects conversions reported back to the background script; very rapid image churn (e.g. infinite-scroll feeds) may lag slightly behind due to the 300ms debounce on rescans.
-- Runs in all frames (including iframes), so embedded images convert too.
 - `ERR_BLOCKED_BY_CLIENT` errors in the console are your ad blocker blocking ad-network scripts — unrelated to this extension.

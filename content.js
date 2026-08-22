@@ -1,8 +1,14 @@
-// Runs automatically on every page (document_idle) and keeps watching for
-// images added later — infinite scroll, lazy-loading, SPA navigation, etc.
+// Only activates when the tab *is* an image — i.e. you navigated directly to
+// an image URL and Chrome rendered its built-in single-image viewer
+// (document.contentType is "image/..." in that case). Regular web pages that
+// merely embed <img> tags are left alone entirely.
 (function () {
   if (window.__rtxHdrBoosterInstalled) return;
   window.__rtxHdrBoosterInstalled = true;
+
+  if (!document.contentType || !document.contentType.startsWith("image/")) {
+    return; // not a directly-opened image — do nothing on this page
+  }
 
   const MIN_AREA = 40000; // skip tiny icons/avatars
   let totalConverted = 0;

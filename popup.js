@@ -78,7 +78,8 @@ function loadImages() {
   chrome.tabs.sendMessage(activeTabId, { type: "rtx-hdr-get-images" }, (resp) => {
     if (chrome.runtime.lastError) {
       countEl.textContent = "";
-      emptyEl.textContent = "Can't reach this page (extension pages, chrome:// tabs, or a page loaded before install).";
+      emptyEl.textContent =
+        "This only activates when a tab is a directly-opened image (not a regular page with images embedded in it). Right-click an image → \"Open image in new tab\" to use it.";
       emptyEl.style.display = "block";
       listEl.innerHTML = "";
       return;
