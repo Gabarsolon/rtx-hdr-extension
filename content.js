@@ -11,7 +11,7 @@
 
   const MIN_AREA = 40000; // skip tiny icons/avatars
   let totalConverted = 0;
-  let autoConvertAll = false; // toggled from the popup, persisted in chrome.storage.local
+  let autoConvertAll = false; // toggled from the popup, persisted in chrome.storage.sync
 
   // Registry of every image we've looked at, keyed by src — powers the
   // popup's "detected images" list. status is one of:
@@ -33,42 +33,7 @@
     }
   }
 
-  // Draws sourceEl into canvas once. Throws synchronously (SecurityError) if
-  // the canvas got tainted (cross-origin draw without CORS clearance) —
-  // that's how we detect the failure case.
-  function drawOnce(ctx, sourceEl, w, h) {
-    ctx.clearRect(0, 0, w, h);
-    ctx.drawImage(sourceEl, 0, 0, w, h);
-  }
-
-  // Best-effort: clones liveSource into a hidden-but-still-rendered element
-  // positioned off-screen, so it keeps animating (Chrome only steps an
-  // animated GIF's frames while the element is part of the render tree —
-  // a detached Image() or a removed <img> freezes on its last frame) and we
-  // have something live left to keep drawing into the canvas after the
-  // original element is gone. Explicitly forces eager loading/decoding —
-  // sites commonly mark real <img> tags loading="lazy", and an off-screen
-  // clone of one of those may never actually load, so this must never be
-  // something the *first* conversion draw depends on, only later frames.
-  function makeHiddenClone(liveSource, w, h) {
-    const el = liveSource.cloneNode();
-    el.loading = "eager";
-    el.decoding = "sync";
-    el.style.cssText =
-      `position:fixed; left:-99999px; top:-99999px; width:${w}px; height:${h}px; pointer-events:none;`;
-    el.setAttribute("aria-hidden", "true");
-    document.documentElement.appendChild(el);
-    return el;
-  }
-
-  // Replaces img with a live <video> fed by canvas.captureStream(). canvas
-  // already has one good frame drawn into it (from the initial synchronous
-  // draw), so the photo shows correctly right away regardless of what
-  // happens next. On top of that, it keeps redrawing a hidden clone of
-  // liveSource into the canvas every frame so anything that changes over
-  // time — animated GIFs above all — keeps showing motion instead of
-  // freezing on that first frame.
-  function swap(img, liveSource, canvas, ctx, stream, src, w, h) {
+  function swap(img, canvas, stream, src) {
     const video = document.createElement("video");
     video.srcObject = stream;
     video.autoplay = true;
@@ -81,28 +46,18 @@
     if (img.height) video.height = img.height;
     img.replaceWith(video);
     video.play().catch(() => {});
-
     totalConverted++;
     setStatus(src, { status: "converted" });
     reportCount();
+  }
 
-    const hiddenClone = makeHiddenClone(liveSource, w, h);
-    let rafId;
-    function tick() {
-      if (!video.isConnected) {
-        cancelAnimationFrame(rafId);
-        hiddenClone.remove();
-        return;
-      }
-      try {
-        ctx.drawImage(hiddenClone, 0, 0, w, h);
-      } catch (e) {
-        // shouldn't happen once the initial taint check passed, but never
-        // let a stray draw error silently kill the animation loop
-      }
-      rafId = requestAnimationFrame(tick);
-    }
-    rafId = requestAnimationFrame(tick);
+  // Draws sourceImg into canvas and captures it. captureStream() throws
+  // synchronously if the canvas got tainted (cross-origin draw without CORS
+  // clearance) — that's how we detect the failure case.
+  function drawAndCapture(canvas, ctx, sourceImg, w, h) {
+    ctx.clearRect(0, 0, w, h);
+    ctx.drawImage(sourceImg, 0, 0, w, h);
+    return canvas.captureStream(30);
   }
 
   function doConversion(img) {
@@ -115,12 +70,8 @@
     const ctx = canvas.getContext("2d");
 
     try {
-      // img is already loaded — attemptConvert only calls doConversion once
-      // img.complete is true — so this runs synchronously, no race with
-      // lazy-loading or network timing.
-      drawOnce(ctx, img, w, h);
-      const stream = canvas.captureStream(30);
-      swap(img, img, canvas, ctx, stream, src, w, h);
+      const stream = drawAndCapture(canvas, ctx, img, w, h);
+      swap(img, canvas, stream, src);
       return;
     } catch (e) {
       // Tainted canvas — cross-origin image whose CDN doesn't send
@@ -139,17 +90,16 @@
       const fresh = new Image();
       fresh.onload = () => {
         // Must use a brand new canvas/context here: the original's
-        // origin-clean flag is permanently false the moment drawImage()
-        // ran on the tainted source, even though the exception came later at
+        // origin-clean flag is permanently false the moment drawImage() ran
+        // on the tainted source, even though the exception came later at
         // captureStream() — there's no way to "un-taint" it.
         const retryCanvas = document.createElement("canvas");
         retryCanvas.width = w;
         retryCanvas.height = h;
         const retryCtx = retryCanvas.getContext("2d");
         try {
-          drawOnce(retryCtx, fresh, w, h);
-          const stream = retryCanvas.captureStream(30);
-          swap(img, fresh, retryCanvas, retryCtx, stream, src, w, h);
+          const stream = drawAndCapture(retryCanvas, retryCtx, fresh, w, h);
+          swap(img, retryCanvas, stream, src);
         } catch (e2) {
           console.warn("RTX HDR Booster: still tainted after data-URL retry, skipped", src);
           setStatus(src, { status: "blocked", reason: "tainted after retry" });
