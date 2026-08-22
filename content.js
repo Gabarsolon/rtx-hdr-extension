@@ -186,8 +186,11 @@
     }
   });
 
-  // Load the toggle's persisted value, then do the initial scan.
-  chrome.storage.sync.get({ autoConvertAll: false }, (result) => {
+  // Load the toggle's persisted value, then do the initial scan. Using
+  // storage.local (not .sync) — sync depends on being signed into Chrome
+  // sync and can lag or silently no-op if that's off; local is instant and
+  // has no such dependency. Defaults to true: auto-convert everywhere.
+  chrome.storage.local.get({ autoConvertAll: true }, (result) => {
     autoConvertAll = !!result.autoConvertAll;
     scan();
   });
@@ -195,7 +198,7 @@
   // Live-apply the toggle without needing a page reload. Turning it on
   // re-scans so already-seen-but-skipped ("detected") images get converted.
   chrome.storage.onChanged.addListener((changes, area) => {
-    if (area !== "sync" || !changes.autoConvertAll) return;
+    if (area !== "local" || !changes.autoConvertAll) return;
     autoConvertAll = !!changes.autoConvertAll.newValue;
     if (autoConvertAll) scan();
   });

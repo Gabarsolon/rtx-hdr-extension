@@ -103,12 +103,15 @@ chrome.tabs.query({ active: true, currentWindow: true }, ([tab]) => {
   loadImages();
 });
 
-chrome.storage.sync.get({ autoConvertAll: false }, (result) => {
+chrome.storage.local.get({ autoConvertAll: true }, (result) => {
   autoToggle.checked = !!result.autoConvertAll;
 });
 
 autoToggle.addEventListener("change", () => {
-  chrome.storage.sync.set({ autoConvertAll: autoToggle.checked }, () => {
+  chrome.storage.local.set({ autoConvertAll: autoToggle.checked }, () => {
+    if (chrome.runtime.lastError) {
+      console.warn("RTX HDR Booster: failed to save toggle", chrome.runtime.lastError);
+    }
     setTimeout(loadImages, 400); // give the content script's storage listener a moment to react
   });
 });
