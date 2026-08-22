@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8" />
+<title>RTX HDR Image Booster</title>
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    width: 360px;
+    max-height: 480px;
+    background: #16181d;
+    color: #e6e6e6;
+    font: 13px/1.4 -apple-system, "Segoe UI", sans-serif;
+  }
+  header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 10px 12px;
+    border-bottom: 1px solid #2a2d34;
+    position: sticky;
+    top: 0;
+    background: #16181d;
+  }
+  header h1 {
+    font-size: 13px;
+    font-weight: 600;
+    margin: 0;
+    color: #a9e34b;
+  }
+  header .count { color: #8b8f98; font-size: 12px; }
+  button#rescan {
+    background: #2a2d34;
+    color: #e6e6e6;
+    border: 1px solid #3a3d44;
+    border-radius: 6px;
+    padding: 5px 10px;
+    font-size: 12px;
+    cursor: pointer;
+  }
+  button#rescan:hover { background: #34373f; }
+  button#rescan:active { transform: translateY(1px); }
+  ul#list {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    max-height: 420px;
+    overflow-y: auto;
+  }
+  li {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 12px;
+    border-bottom: 1px solid #202329;
+    cursor: pointer;
+  }
+  li:hover { background: #1d2026; }
+  li .thumb {
+    width: 40px;
+    height: 40px;
+    object-fit: cover;
+    border-radius: 4px;
+    background: #202329;
+    flex-shrink: 0;
+  }
+  li .meta { flex: 1; min-width: 0; }
+  li .src {
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    color: #cfd2d8;
+  }
+  li .dims { color: #8b8f98; font-size: 11px; }
+  .badge {
+    font-size: 11px;
+    padding: 2px 6px;
+    border-radius: 10px;
+    flex-shrink: 0;
+    white-space: nowrap;
+  }
+  .badge.converted { background: #1f3a1a; color: #7ee081; }
+  .badge.blocked { background: #3a1f1f; color: #e08181; }
+  .badge.pending { background: #3a361f; color: #e0d081; }
+  #empty {
+    padding: 24px 12px;
+    text-align: center;
+    color: #8b8f98;
+  }
+</style>
+</head>
+<body>
+  <header>
+    <h1>RTX HDR Image Booster</h1>
+    <button id="rescan">Rescan</button>
+  </header>
+  <div class="count" id="count" style="padding: 6px 12px;"></div>
+  <ul id="list"></ul>
+  <div id="empty" style="display:none;">No images detected on this tab yet.</div>
+  <script src="popup.js"></script>
+</body>
+</html>
