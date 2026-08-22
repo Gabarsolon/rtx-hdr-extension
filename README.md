@@ -26,7 +26,7 @@ Worth being upfront about: RTX Video HDR most likely hooks into the GPU's real v
 
 ## Animated GIFs
 
-Conversion doesn't just draw the image into the canvas once — it keeps redrawing the source into the canvas every frame via `requestAnimationFrame`, and the resulting `<video>` stream reflects that. A one-time draw would freeze an animated GIF on frame 0 forever, since `captureStream()` only ever streams whatever pixels currently sit in the canvas. To keep a GIF's frames actually advancing, a hidden copy of the original image is kept alive off-screen (`position: fixed; left: -99999px`) instead of being removed from the page — Chrome stops animating an `<img>` the moment it's fully detached from the DOM, so this hidden clone is what keeps decoding new frames for the canvas to pick up. It's cleaned up automatically once the `<video>` it feeds leaves the page.
+The very first draw into the canvas always comes straight from the already-loaded source image, synchronously — so a normal static photo shows correctly right away, with no dependency on anything else loading. On top of that, a hidden clone of the source is kept alive off-screen (`position: fixed; left: -99999px`, forced `loading="eager"`) and keeps getting redrawn into the canvas every `requestAnimationFrame` tick, so an animated GIF's frames keep advancing in the resulting `<video>` stream instead of freezing on frame 0 — Chrome stops animating an `<img>` the moment it's fully detached from the DOM, so this clone is what keeps decoding new frames. It's cleaned up automatically once the `<video>` it feeds leaves the page.
 
 ## How it handles CORS-locked images
 
