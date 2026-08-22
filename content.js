@@ -11,7 +11,7 @@
 
   const MIN_AREA = 40000; // skip tiny icons/avatars
   let totalConverted = 0;
-  let autoConvertAll = false; // toggled from the popup, persisted in chrome.storage.sync
+  let autoConvertAll = false; // toggled from the popup, persisted in chrome.storage.local
 
   // Registry of every image we've looked at, keyed by src — powers the
   // popup's "detected images" list. status is one of:
@@ -33,7 +33,46 @@
     }
   }
 
-  function swap(img, canvas, stream, src) {
+  // Creates a hidden-but-still-rendered copy of the source image, appended
+  // off-screen. Chrome only steps an animated GIF's frames while the
+  // element is part of the render tree — a detached Image() or one that's
+  // been display:none'd / removed from the DOM stops animating and freezes
+  // on whatever frame it was last showing. Moving it off-screen (instead of
+  // hiding/removing it) keeps it animating so we have something live to
+  // keep drawing into the canvas.
+  function makeHiddenSource(baseImg, w, h, dataUrl) {
+    const el = dataUrl ? new Image() : baseImg.cloneNode();
+    el.decoding = "sync";
+    el.style.cssText =
+      `position:fixed; left:-99999px; top:-99999px; width:${w}px; height:${h}px; pointer-events:none;`;
+    el.setAttribute("aria-hidden", "true");
+    document.documentElement.appendChild(el);
+    if (dataUrl) el.src = dataUrl;
+    return el;
+  }
+
+  function whenLoaded(el, onLoad, onError) {
+    if (el.complete && el.naturalWidth > 0) {
+      onLoad();
+      return;
+    }
+    el.addEventListener("load", onLoad, { once: true });
+    if (onError) el.addEventListener("error", onError, { once: true });
+  }
+
+  // Draws sourceEl into canvas once. Throws synchronously (SecurityError) if
+  // the canvas got tainted (cross-origin draw without CORS clearance) —
+  // that's how we detect the failure case.
+  function drawOnce(ctx, sourceEl, w, h) {
+    ctx.clearRect(0, 0, w, h);
+    ctx.drawImage(sourceEl, 0, 0, w, h);
+  }
+
+  // Replaces img with a live <video> fed by canvas.captureStream(), then
+  // keeps redrawing sourceEl into the canvas every frame so anything that
+  // changes over time — animated GIFs above all — actually shows up as
+  // motion in the stream, instead of freezing on the first frame drawn.
+  function swap(img, sourceEl, canvas, ctx, stream, src, w, h) {
     const video = document.createElement("video");
     video.srcObject = stream;
     video.autoplay = true;
@@ -46,70 +85,93 @@
     if (img.height) video.height = img.height;
     img.replaceWith(video);
     video.play().catch(() => {});
+
+    let rafId;
+    function tick() {
+      if (!video.isConnected) {
+        cancelAnimationFrame(rafId);
+        sourceEl.remove(); // stop the hidden animated source, free it
+        return;
+      }
+      try {
+        ctx.drawImage(sourceEl, 0, 0, w, h);
+      } catch (e) {
+        // shouldn't happen once the initial taint check passed, but never
+        // let a stray draw error silently kill the animation loop
+      }
+      rafId = requestAnimationFrame(tick);
+    }
+    rafId = requestAnimationFrame(tick);
+
     totalConverted++;
     setStatus(src, { status: "converted" });
     reportCount();
-  }
-
-  // Draws sourceImg into canvas and captures it. captureStream() throws
-  // synchronously if the canvas got tainted (cross-origin draw without CORS
-  // clearance) — that's how we detect the failure case.
-  function drawAndCapture(canvas, ctx, sourceImg, w, h) {
-    ctx.clearRect(0, 0, w, h);
-    ctx.drawImage(sourceImg, 0, 0, w, h);
-    return canvas.captureStream(30);
   }
 
   function doConversion(img) {
     const w = img.naturalWidth;
     const h = img.naturalHeight;
     const src = img.src;
-    const canvas = document.createElement("canvas");
-    canvas.width = w;
-    canvas.height = h;
-    const ctx = canvas.getContext("2d");
 
-    try {
-      const stream = drawAndCapture(canvas, ctx, img, w, h);
-      swap(img, canvas, stream, src);
-      return;
-    } catch (e) {
-      // Tainted canvas — cross-origin image whose CDN doesn't send
-      // Access-Control-Allow-Origin. Ask the background service worker to
-      // fetch the bytes instead: extensions with host_permissions can fetch
-      // cross-origin resources without CORS restrictions (unlike page JS),
-      // and the data: URL it hands back never taints a canvas.
-    }
+    const sourceEl = makeHiddenSource(img, w, h);
 
-    chrome.runtime.sendMessage({ type: "rtx-hdr-fetch-image", url: src }, (resp) => {
-      if (chrome.runtime.lastError || !resp || !resp.ok) {
-        console.warn("RTX HDR Booster: cross-origin fetch failed, skipped", src, resp && resp.error);
-        setStatus(src, { status: "blocked", reason: (resp && resp.error) || "fetch failed" });
+    whenLoaded(sourceEl, () => {
+      const canvas = document.createElement("canvas");
+      canvas.width = w;
+      canvas.height = h;
+      const ctx = canvas.getContext("2d");
+
+      try {
+        drawOnce(ctx, sourceEl, w, h);
+        const stream = canvas.captureStream(30);
+        swap(img, sourceEl, canvas, ctx, stream, src, w, h);
         return;
+      } catch (e) {
+        // Tainted canvas — cross-origin image whose CDN doesn't send
+        // Access-Control-Allow-Origin. Drop this source clone and ask the
+        // background service worker to fetch the bytes instead: extensions
+        // with host_permissions can fetch cross-origin resources without
+        // CORS restrictions (unlike page JS), and the data: URL it hands
+        // back never taints a canvas.
+        sourceEl.remove();
       }
-      const fresh = new Image();
-      fresh.onload = () => {
-        // Must use a brand new canvas/context here: the original's
-        // origin-clean flag is permanently false the moment drawImage() ran
-        // on the tainted source, even though the exception came later at
-        // captureStream() — there's no way to "un-taint" it.
-        const retryCanvas = document.createElement("canvas");
-        retryCanvas.width = w;
-        retryCanvas.height = h;
-        const retryCtx = retryCanvas.getContext("2d");
-        try {
-          const stream = drawAndCapture(retryCanvas, retryCtx, fresh, w, h);
-          swap(img, retryCanvas, stream, src);
-        } catch (e2) {
-          console.warn("RTX HDR Booster: still tainted after data-URL retry, skipped", src);
-          setStatus(src, { status: "blocked", reason: "tainted after retry" });
+
+      chrome.runtime.sendMessage({ type: "rtx-hdr-fetch-image", url: src }, (resp) => {
+        if (chrome.runtime.lastError || !resp || !resp.ok) {
+          console.warn("RTX HDR Booster: cross-origin fetch failed, skipped", src, resp && resp.error);
+          setStatus(src, { status: "blocked", reason: (resp && resp.error) || "fetch failed" });
+          return;
         }
-      };
-      fresh.onerror = () => {
-        console.warn("RTX HDR Booster: data URL failed to decode", src);
-        setStatus(src, { status: "blocked", reason: "data URL decode failed" });
-      };
-      fresh.src = resp.dataUrl;
+
+        const retrySource = makeHiddenSource(img, w, h, resp.dataUrl);
+        whenLoaded(
+          retrySource,
+          () => {
+            // Must use a brand new canvas/context here: the original's
+            // origin-clean flag is permanently false the moment drawImage()
+            // ran on the tainted source, even though the exception came
+            // later at captureStream() — there's no way to "un-taint" it.
+            const retryCanvas = document.createElement("canvas");
+            retryCanvas.width = w;
+            retryCanvas.height = h;
+            const retryCtx = retryCanvas.getContext("2d");
+            try {
+              drawOnce(retryCtx, retrySource, w, h);
+              const stream = retryCanvas.captureStream(30);
+              swap(img, retrySource, retryCanvas, retryCtx, stream, src, w, h);
+            } catch (e2) {
+              console.warn("RTX HDR Booster: still tainted after data-URL retry, skipped", src);
+              setStatus(src, { status: "blocked", reason: "tainted after retry" });
+              retrySource.remove();
+            }
+          },
+          () => {
+            console.warn("RTX HDR Booster: data URL failed to decode", src);
+            setStatus(src, { status: "blocked", reason: "data URL decode failed" });
+            retrySource.remove();
+          }
+        );
+      });
     });
   }
 
