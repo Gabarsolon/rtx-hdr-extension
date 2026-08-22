@@ -11,6 +11,7 @@
 
   const MIN_AREA = 40000; // skip tiny icons/avatars
   let totalConverted = 0;
+  let autoConvertAll = false; // toggled from the popup, persisted in chrome.storage.sync
 
   // Registry of every image we've looked at, keyed by src — powers the
   // popup's "detected images" list. status is one of:
@@ -122,10 +123,13 @@
 
     if (img.naturalWidth * img.naturalHeight < MIN_AREA) return;
 
-    img.dataset.rtxHdrDone = "1"; // mark before the async CORS retry can land
+    const shouldConvert = isImagePage || autoConvertAll;
 
-    if (!isImagePage) {
-      // Regular page: list it for the popup, but never convert.
+    if (!shouldConvert) {
+      // List it for the popup, but don't mark it permanently done — if the
+      // "auto-convert on all pages" toggle gets flipped on later, the next
+      // rescan (triggered by the storage change listener below) needs to
+      // still be able to pick this element up.
       setStatus(img.src, {
         width: img.naturalWidth,
         height: img.naturalHeight,
@@ -134,6 +138,7 @@
       return;
     }
 
+    img.dataset.rtxHdrDone = "1"; // mark before the async CORS retry can land
     setStatus(img.src, {
       width: img.naturalWidth,
       height: img.naturalHeight,
@@ -156,9 +161,6 @@
 
   const debouncedScan = debounce(scan, 300);
 
-  // Initial pass.
-  scan();
-
   // Watch for new <img> elements and src changes (infinite scroll, lazy
   // loading, client-side routing).
   const observer = new MutationObserver(debouncedScan);
@@ -179,8 +181,22 @@
     }
 
     if (msg.type === "rtx-hdr-get-images") {
-      sendResponse({ images: Array.from(registry.values()), isImagePage });
+      sendResponse({ images: Array.from(registry.values()), isImagePage, autoConvertAll });
       return;
     }
+  });
+
+  // Load the toggle's persisted value, then do the initial scan.
+  chrome.storage.sync.get({ autoConvertAll: false }, (result) => {
+    autoConvertAll = !!result.autoConvertAll;
+    scan();
+  });
+
+  // Live-apply the toggle without needing a page reload. Turning it on
+  // re-scans so already-seen-but-skipped ("detected") images get converted.
+  chrome.storage.onChanged.addListener((changes, area) => {
+    if (area !== "sync" || !changes.autoConvertAll) return;
+    autoConvertAll = !!changes.autoConvertAll.newValue;
+    if (autoConvertAll) scan();
   });
 })();

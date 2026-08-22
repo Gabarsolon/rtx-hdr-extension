@@ -1,9 +1,10 @@
 # RTX HDR Image Booster
 
-Two modes, depending on the tab:
+Two modes, depending on the tab — plus a popup toggle to collapse them into one:
 
-- **Regular page** (embeds `<img>` tags among other content): images are only *detected* and listed in the popup — nothing is converted. Click a row to open that image directly in a new tab.
+- **Regular page** (embeds `<img>` tags among other content): images are only *detected* and listed in the popup — nothing is converted by default. Click a row to open that image directly in a new tab.
 - **Direct image tab** (you navigated straight to an image URL, or opened one via right-click → "Open image in new tab" — Chrome renders its built-in single-image viewer, `document.contentType` starts with `image/`): the image gets swapped for a `<video>` element backed by a live `canvas.captureStream()` of it. Since it's a real `<video>`, RTX Video HDR (which only watches for video elements) picks it up and tone-maps it.
+- **"Auto-convert on every page" toggle** in the popup: flips regular pages into converting on sight too, same as direct image tabs. Persisted via `chrome.storage.sync` and applies live to already-open tabs without a reload.
 
 ## Install (unpacked, since it's not on the Chrome Web Store)
 

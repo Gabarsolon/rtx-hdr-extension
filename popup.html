@@ -31,6 +31,53 @@
     color: #a9e34b;
   }
   header .count { color: #8b8f98; font-size: 12px; }
+  .toggle-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    padding: 8px 12px;
+    border-bottom: 1px solid #2a2d34;
+    background: #1a1d23;
+  }
+  .toggle-row label {
+    font-size: 12px;
+    color: #cfd2d8;
+    cursor: pointer;
+  }
+  .switch {
+    position: relative;
+    display: inline-block;
+    width: 34px;
+    height: 20px;
+    flex-shrink: 0;
+  }
+  .switch input {
+    opacity: 0;
+    width: 0;
+    height: 0;
+  }
+  .switch .slider {
+    position: absolute;
+    cursor: pointer;
+    inset: 0;
+    background: #3a3d44;
+    border-radius: 20px;
+    transition: background 0.15s;
+  }
+  .switch .slider::before {
+    content: "";
+    position: absolute;
+    width: 14px;
+    height: 14px;
+    left: 3px;
+    top: 3px;
+    background: #e6e6e6;
+    border-radius: 50%;
+    transition: transform 0.15s;
+  }
+  .switch input:checked + .slider { background: #4d7c1f; }
+  .switch input:checked + .slider::before { transform: translateX(14px); background: #a9e34b; }
   button#rescan {
     background: #2a2d34;
     color: #e6e6e6;
@@ -105,7 +152,14 @@
     <h1>RTX HDR Image Booster</h1>
     <button id="rescan">Rescan</button>
   </header>
-  <div id="hint">These images are only <strong>listed</strong>, not converted — open one directly (click a row) to actually HDR-ify it.</div>
+  <div class="toggle-row">
+    <label for="autoToggle">Auto-convert on every page</label>
+    <span class="switch">
+      <input type="checkbox" id="autoToggle" />
+      <span class="slider"></span>
+    </span>
+  </div>
+  <div id="hint">These images are only <strong>listed</strong>, not converted — open one directly (click a row) to actually HDR-ify it, or flip the toggle above to convert everywhere automatically.</div>
   <div class="count" id="count" style="padding: 6px 12px;"></div>
   <ul id="list"></ul>
   <div id="empty" style="display:none;">No images detected on this tab yet.</div>

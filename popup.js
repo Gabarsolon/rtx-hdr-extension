@@ -3,6 +3,7 @@ const emptyEl = document.getElementById("empty");
 const countEl = document.getElementById("count");
 const rescanBtn = document.getElementById("rescan");
 const hintEl = document.getElementById("hint");
+const autoToggle = document.getElementById("autoToggle");
 
 let activeTabId = null;
 
@@ -23,11 +24,12 @@ function filenameOf(src) {
   }
 }
 
-function render(images, isImagePage) {
+function render(images, isImagePage, autoConvertAll) {
   listEl.innerHTML = "";
   emptyEl.textContent = "No images detected on this tab yet.";
 
-  hintEl.style.display = isImagePage ? "none" : "block";
+  const activeConversion = isImagePage || autoConvertAll;
+  hintEl.style.display = activeConversion ? "none" : "block";
 
   if (!images || images.length === 0) {
     emptyEl.style.display = "block";
@@ -38,7 +40,7 @@ function render(images, isImagePage) {
 
   const converted = images.filter((i) => i.status === "converted").length;
   const blocked = images.filter((i) => i.status === "blocked").length;
-  countEl.textContent = isImagePage
+  countEl.textContent = activeConversion
     ? `${images.length} detected · ${converted} converted · ${blocked} blocked`
     : `${images.length} detected · click one to open it directly`;
 
@@ -91,7 +93,7 @@ function loadImages() {
       listEl.innerHTML = "";
       return;
     }
-    render(resp && resp.images, resp && resp.isImagePage);
+    render(resp && resp.images, resp && resp.isImagePage, resp && resp.autoConvertAll);
   });
 }
 
@@ -99,6 +101,16 @@ chrome.tabs.query({ active: true, currentWindow: true }, ([tab]) => {
   if (!tab) return;
   activeTabId = tab.id;
   loadImages();
+});
+
+chrome.storage.sync.get({ autoConvertAll: false }, (result) => {
+  autoToggle.checked = !!result.autoConvertAll;
+});
+
+autoToggle.addEventListener("change", () => {
+  chrome.storage.sync.set({ autoConvertAll: autoToggle.checked }, () => {
+    setTimeout(loadImages, 400); // give the content script's storage listener a moment to react
+  });
 });
 
 rescanBtn.addEventListener("click", () => {
