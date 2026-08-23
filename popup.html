@@ -78,7 +78,7 @@
   }
   .switch input:checked + .slider { background: #4d7c1f; }
   .switch input:checked + .slider::before { transform: translateX(14px); background: #a9e34b; }
-  button#rescan {
+  button#rescan, button#openLocal {
     background: #2a2d34;
     color: #e6e6e6;
     border: 1px solid #3a3d44;
@@ -87,8 +87,8 @@
     font-size: 12px;
     cursor: pointer;
   }
-  button#rescan:hover { background: #34373f; }
-  button#rescan:active { transform: translateY(1px); }
+  button#rescan:hover, button#openLocal:hover { background: #34373f; }
+  button#rescan:active, button#openLocal:active { transform: translateY(1px); }
   ul#list {
     list-style: none;
     margin: 0;
@@ -158,6 +158,10 @@
       <input type="checkbox" id="autoToggle" />
       <span class="slider"></span>
     </label>
+  </div>
+  <div class="toggle-row">
+    <span>Open a picture or folder from your PC</span>
+    <button id="openLocal">Open…</button>
   </div>
   <div id="hint">These images are only <strong>listed</strong>, not converted — open one directly (click a row) to actually HDR-ify it, or flip the toggle above to convert everywhere automatically.</div>
   <div class="count" id="count" style="padding: 6px 12px;"></div>

@@ -4,6 +4,7 @@ const countEl = document.getElementById("count");
 const rescanBtn = document.getElementById("rescan");
 const hintEl = document.getElementById("hint");
 const autoToggle = document.getElementById("autoToggle");
+const openLocalBtn = document.getElementById("openLocal");
 
 let activeTabId = null;
 
@@ -114,6 +115,10 @@ autoToggle.addEventListener("change", () => {
     }
     setTimeout(loadImages, 400); // give the content script's storage listener a moment to react
   });
+});
+
+openLocalBtn.addEventListener("click", () => {
+  chrome.tabs.create({ url: chrome.runtime.getURL("viewer.html") });
 });
 
 rescanBtn.addEventListener("click", () => {

@@ -16,6 +16,15 @@ Two modes, depending on the tab — plus a popup toggle to collapse them into on
 
 Chrome will show a "Read and change all your data on all websites you visit" permission warning — that's expected, since it now needs to run on every site rather than only on click.
 
+## Local pictures & folders
+
+The popup's **Open…** button opens a dedicated tab (`viewer.html`) for converting files straight from your PC:
+
+- **Open Picture** — pick a single image file; it's HDR-converted immediately, full-size, same as a direct image tab.
+- **Open Folder** — pick a folder; every image inside is listed as a thumbnail grid. Click a thumbnail to convert just that one, or **Convert All** to do the whole folder at once.
+
+Local files never need the CORS-bypass path — a `blob:` URL from a file you picked yourself never taints a canvas — so conversion here always succeeds.
+
 ## Use
 
 Click the toolbar icon any time to open the popup — it lists every sufficiently large image detected on the current tab: thumbnail, dimensions, and status (`found` on a regular page / `HDR` converted / `blocked` / `pending` on a direct image tab; hover a `blocked` badge for the reason). Click any row to open that image directly in a new tab — which, being a direct image tab, will trigger conversion. The popup's **Rescan** button forces a fresh detection pass.
