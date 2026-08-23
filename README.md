@@ -20,10 +20,14 @@ Chrome will show a "Read and change all your data on all websites you visit" per
 
 The popup's **Open…** button opens a dedicated tab (`viewer.html`) for converting files straight from your PC:
 
-- **Open Picture** — pick a single image file; it's HDR-converted immediately, full-size, same as a direct image tab.
-- **Open Folder** — pick a folder; every image inside is listed as a thumbnail grid. Click a thumbnail to convert just that one, or **Convert All** to do the whole folder at once.
+- **Open Picture** — pick a single image file; it's HDR-converted immediately, full-size, and automatically requests real browser fullscreen (relevant if you're chasing RTX Video Super Resolution, which reportedly only engages in fullscreen).
+- **Open Folder** — pick a folder; every image inside is listed as a thumbnail grid. Click a thumbnail to open and fullscreen it individually, or **Convert All** to HDR-convert every thumbnail in place, small, for browsing the grid itself.
+
+If the browser blocks the automatic fullscreen request (it requires a fresh user gesture, and decoding the image takes a tick that can occasionally eat that gesture), double-click the video to fullscreen it manually — there's an on-page hint for this.
 
 Local files never need the CORS-bypass path — a `blob:` URL from a file you picked yourself never taints a canvas — so conversion here always succeeds.
+
+**Using this in Incognito:** Chrome disables extensions in Incognito windows by default. Go to `chrome://extensions` → this extension's **Details** → toggle **Allow in Incognito** on. Without that, clicking the popup's buttons from an Incognito window still runs the extension in your regular profile, so new tabs it opens land outside the Incognito window.
 
 ## Use
 

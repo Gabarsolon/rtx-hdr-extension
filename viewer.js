@@ -86,6 +86,7 @@ function showSingle(file) {
     const video = convertToVideo(probe);
     URL.revokeObjectURL(url);
     singleMediaEl.appendChild(video);
+    requestVideoFullscreen(video);
   };
   probe.onerror = () => {
     URL.revokeObjectURL(url);
@@ -94,6 +95,24 @@ function showSingle(file) {
     hintEl.style.display = "block";
   };
   probe.src = url;
+}
+
+// Browsers only grant fullscreen off a user gesture, and the gesture from
+// the original click can, in principle, have expired by the time the image
+// finishes decoding a tick later — so this is attempted immediately, but a
+// double-click on the video is wired up as a manual fallback/toggle in case
+// the automatic request gets rejected.
+function requestVideoFullscreen(video) {
+  video.requestFullscreen().catch((err) => {
+    console.warn("RTX HDR Viewer: auto-fullscreen was blocked, double-click the video to fullscreen it.", err);
+  });
+  video.addEventListener("dblclick", () => {
+    if (document.fullscreenElement === video) {
+      document.exitFullscreen();
+    } else {
+      video.requestFullscreen().catch(() => {});
+    }
+  });
 }
 
 function showGrid(files) {
@@ -119,7 +138,10 @@ function showGrid(files) {
 
     cell.appendChild(img);
     cell.appendChild(name);
-    cell.addEventListener("click", () => convertCell(cell, img));
+    // Clicking a thumbnail opens the full, fullscreen-requesting single
+    // view for that file — "Convert All" below is what does the small
+    // in-place conversion, for browsing the grid itself as HDR previews.
+    cell.addEventListener("click", () => showSingle(file));
 
     gridEl.appendChild(cell);
   }

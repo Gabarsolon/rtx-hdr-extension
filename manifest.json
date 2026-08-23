@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "RTX HDR Image Booster",
-  "version": "3.6",
+  "version": "3.7",
   "description": "Lists images found on any page in a popup, and turns directly-opened images into live canvas-stream video so RTX Video HDR tone-maps them like real video. Also opens local pictures/folders from your PC. Optional toggle to auto-convert on every page.",
   "permissions": ["storage"],
   "host_permissions": ["<all_urls>"],
