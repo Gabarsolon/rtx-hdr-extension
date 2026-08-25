@@ -42,9 +42,9 @@ Plenty of sites (Instagram, Twitter/X, TikTok, YouTube, most livestream players)
 
 This is heuristic (pattern-matching request URLs, since the Performance API doesn't expose content-type), so it can occasionally miss an unusual CDN or pick up an unrelated resource that happens to match the pattern.
 
-## Fullscreen hotkey for any video (Alt+F)
+## Fullscreen hotkey for any video (Alt+Shift+F)
 
-Hover any `<video>` on a page — a native one like Instagram's, or one this extension converted — and press **Alt+F** to `requestFullscreen()` it directly, in place. No popup, no new tab, nothing else on the page touched.
+Hover any `<video>` on a page — a native one like Instagram's, or one this extension converted — and press **Alt+Shift+F** to `requestFullscreen()` it directly, in place. No popup, no new tab, nothing else on the page touched. (Not plain Alt+F — that's Chrome's own shortcut for its 3-dot menu, and the browser eats it before a page ever sees the keydown.)
 
 This exists because RTX Video HDR and RTX Video Super Resolution are driver/GPU-level features with **no web API** — there's no JS or DOM hook an extension (or the page itself) can call to turn them on for a specific video. Whether they engage is entirely up to NVIDIA's own heuristics, but there are real reports that on-screen video size matters, with fullscreen being the reliable case. Alt+F just makes that cheap to test; it doesn't guarantee anything actually engages. Other known requirements worth checking independently of this extension: Windows must be in HDR mode, hardware-accelerated video decode must be on in Chrome (`chrome://settings/system`), and the effect must be enabled for Chrome in the NVIDIA app.
 

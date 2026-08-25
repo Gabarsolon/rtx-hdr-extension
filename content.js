@@ -336,6 +336,12 @@
   // Uses capture-phase listeners so it works even inside a site's own
   // player controls, and never touches the page's DOM (no risk of
   // disturbing a site's own player/React state).
+  //
+  // Alt+Shift+F, not plain Alt+F: Chrome itself owns Alt+F (opens the
+  // browser's 3-dot menu) and Alt+E as menu-access accelerators — those
+  // never even reach page JS as a keydown event, the browser chrome
+  // intercepts them first. Alt+Shift+F isn't claimed by Chrome or any site
+  // convention.
   let hoveredVideo = null;
 
   document.addEventListener(
@@ -359,7 +365,7 @@
   document.addEventListener(
     "keydown",
     (e) => {
-      if (!e.altKey || e.ctrlKey || e.metaKey || e.shiftKey) return;
+      if (!e.altKey || !e.shiftKey || e.ctrlKey || e.metaKey) return;
       if (e.key.toLowerCase() !== "f") return;
       if (!hoveredVideo || !hoveredVideo.isConnected) return;
       e.preventDefault();
