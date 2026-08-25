@@ -9,6 +9,7 @@ const openLocalBtn = document.getElementById("openLocal");
 let activeTabId = null;
 
 function statusLabel(item) {
+  if (item.kind === "video") return { text: "video", cls: "native" };
   if (item.status === "converted") return { text: "HDR", cls: "converted" };
   if (item.status === "blocked") return { text: "blocked", cls: "blocked" };
   if (item.status === "detected") return { text: "found", cls: "detected" };
@@ -25,33 +26,42 @@ function filenameOf(src) {
   }
 }
 
-function render(images, isImagePage, autoConvertAll) {
+function render(items, isImagePage, autoConvertAll) {
   listEl.innerHTML = "";
-  emptyEl.textContent = "No images detected on this tab yet.";
+  emptyEl.textContent = "No images or videos detected on this tab yet.";
 
   const activeConversion = isImagePage || autoConvertAll;
   hintEl.style.display = activeConversion ? "none" : "block";
 
-  if (!images || images.length === 0) {
+  if (!items || items.length === 0) {
     emptyEl.style.display = "block";
     countEl.textContent = "";
     return;
   }
   emptyEl.style.display = "none";
 
-  const converted = images.filter((i) => i.status === "converted").length;
-  const blocked = images.filter((i) => i.status === "blocked").length;
+  const videoCount = items.filter((i) => i.kind === "video").length;
+  const imageCount = items.length - videoCount;
+  const converted = items.filter((i) => i.status === "converted").length;
+  const blocked = items.filter((i) => i.status === "blocked").length;
   countEl.textContent = activeConversion
-    ? `${images.length} detected · ${converted} converted · ${blocked} blocked`
-    : `${images.length} detected · click one to open it directly`;
+    ? `${imageCount} images (${converted} converted, ${blocked} blocked) · ${videoCount} videos`
+    : `${imageCount} images · ${videoCount} videos · click one to open it directly`;
 
-  for (const item of images) {
+  for (const item of items) {
     const li = document.createElement("li");
 
-    const thumb = document.createElement("img");
-    thumb.className = "thumb";
-    thumb.src = item.src;
-    thumb.loading = "lazy";
+    let thumb;
+    if (item.kind === "video") {
+      thumb = document.createElement("div");
+      thumb.className = "thumb video-thumb";
+      thumb.textContent = "🎬";
+    } else {
+      thumb = document.createElement("img");
+      thumb.className = "thumb";
+      thumb.src = item.src;
+      thumb.loading = "lazy";
+    }
 
     const meta = document.createElement("div");
     meta.className = "meta";
@@ -94,7 +104,7 @@ function loadImages() {
       listEl.innerHTML = "";
       return;
     }
-    render(resp && resp.images, resp && resp.isImagePage, resp && resp.autoConvertAll);
+    render(resp && resp.items, resp && resp.isImagePage, resp && resp.autoConvertAll);
   });
 }
 

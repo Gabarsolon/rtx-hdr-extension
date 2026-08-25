@@ -1,8 +1,10 @@
-// Detects images on every page (for the popup's list), but only *converts*
-// an image to a live video stream when the tab itself is a directly-opened
-// image — i.e. Chrome's built-in single-image viewer, where
+// Detects images AND videos on every page (for the popup's list), but only
+// *converts* an image to a live video stream when the tab itself is a
+// directly-opened image — i.e. Chrome's built-in single-image viewer, where
 // document.contentType starts with "image/". Regular pages that merely
-// embed <img> tags get detected and listed, but left untouched.
+// embed <img> tags get detected and listed, but left untouched. <video>
+// elements are already real videos — nothing to convert — so they're just
+// detected and listed for visibility/opening, same as images.
 (function () {
   if (window.__rtxHdrBoosterInstalled) return;
   window.__rtxHdrBoosterInstalled = true;
@@ -13,11 +15,13 @@
   let totalConverted = 0;
   let autoConvertAll = false; // toggled from the popup, persisted in chrome.storage.sync
 
-  // Registry of every image we've looked at, keyed by src — powers the
-  // popup's "detected images" list. status is one of:
+  // Registry of every image/video we've looked at, keyed by src — powers the
+  // popup's "detected" list. Each entry has a "kind": "image" | "video".
+  // Image entries have a status, one of:
   //   "converted" | "blocked" | "pending" | "detected"
   // ("detected" = found on a regular page, never attempted — conversion
-  // only runs on image pages.)
+  // only runs on image pages.) Video entries are always "native" — they're
+  // already real <video> elements, nothing to convert.
   const registry = new Map();
 
   function setStatus(src, patch) {
@@ -131,6 +135,7 @@
       // rescan (triggered by the storage change listener below) needs to
       // still be able to pick this element up.
       setStatus(img.src, {
+        kind: "image",
         width: img.naturalWidth,
         height: img.naturalHeight,
         status: "detected",
@@ -140,6 +145,7 @@
 
     img.dataset.rtxHdrDone = "1"; // mark before the async CORS retry can land
     setStatus(img.src, {
+      kind: "image",
       width: img.naturalWidth,
       height: img.naturalHeight,
       status: "pending",
@@ -147,8 +153,31 @@
     doConversion(img);
   }
 
+  // Videos are already real <video> elements — no conversion needed, just
+  // list them. currentSrc is used over .src since it's what the browser
+  // actually resolved (handles <source> children, picks the active track).
+  function attemptDetectVideo(video) {
+    if (video.dataset.rtxHdrSeen) return;
+
+    const src = video.currentSrc || video.src;
+    if (!src) {
+      // Not resolved yet (e.g. <source> children still loading) — try
+      // again once metadata is available.
+      video.addEventListener("loadedmetadata", () => attemptDetectVideo(video), { once: true });
+      return;
+    }
+
+    const w = video.videoWidth || video.clientWidth;
+    const h = video.videoHeight || video.clientHeight;
+    if (w * h < MIN_AREA) return;
+
+    video.dataset.rtxHdrSeen = "1";
+    setStatus(src, { kind: "video", width: w, height: h, status: "native" });
+  }
+
   function scan() {
     document.querySelectorAll("img").forEach(attemptConvert);
+    document.querySelectorAll("video").forEach(attemptDetectVideo);
   }
 
   function debounce(fn, wait) {
@@ -181,7 +210,7 @@
     }
 
     if (msg.type === "rtx-hdr-get-images") {
-      sendResponse({ images: Array.from(registry.values()), isImagePage, autoConvertAll });
+      sendResponse({ items: Array.from(registry.values()), isImagePage, autoConvertAll });
       return;
     }
   });

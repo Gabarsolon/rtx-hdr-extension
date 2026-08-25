@@ -113,6 +113,12 @@
     background: #202329;
     flex-shrink: 0;
   }
+  li .video-thumb {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 18px;
+  }
   li .meta { flex: 1; min-width: 0; }
   li .src {
     white-space: nowrap;
@@ -132,6 +138,7 @@
   .badge.blocked { background: #3a1f1f; color: #e08181; }
   .badge.pending { background: #3a361f; color: #e0d081; }
   .badge.detected { background: #23262d; color: #9aa0aa; }
+  .badge.native { background: #1a2f3a; color: #7ec8e0; }
   #empty {
     padding: 24px 12px;
     text-align: center;
@@ -163,7 +170,7 @@
     <span>Open a picture or folder from your PC</span>
     <button id="openLocal">Open…</button>
   </div>
-  <div id="hint">These images are only <strong>listed</strong>, not converted — open one directly (click a row) to actually HDR-ify it, or flip the toggle above to convert everywhere automatically.</div>
+  <div id="hint">Images here are only <strong>listed</strong>, not converted — open one directly (click a row) to actually HDR-ify it, or flip the toggle above to convert everywhere automatically. Videos are already real videos, so they're just listed for you to open.</div>
   <div class="count" id="count" style="padding: 6px 12px;"></div>
   <ul id="list"></ul>
   <div id="empty" style="display:none;">No images detected on this tab yet.</div>
