@@ -42,6 +42,12 @@ Plenty of sites (Instagram, Twitter/X, TikTok, YouTube, most livestream players)
 
 This is heuristic (pattern-matching request URLs, since the Performance API doesn't expose content-type), so it can occasionally miss an unusual CDN or pick up an unrelated resource that happens to match the pattern.
 
+## Fullscreen hotkey for any video (Alt+F)
+
+Hover any `<video>` on a page — a native one like Instagram's, or one this extension converted — and press **Alt+F** to `requestFullscreen()` it directly, in place. No popup, no new tab, nothing else on the page touched.
+
+This exists because RTX Video HDR and RTX Video Super Resolution are driver/GPU-level features with **no web API** — there's no JS or DOM hook an extension (or the page itself) can call to turn them on for a specific video. Whether they engage is entirely up to NVIDIA's own heuristics, but there are real reports that on-screen video size matters, with fullscreen being the reliable case. Alt+F just makes that cheap to test; it doesn't guarantee anything actually engages. Other known requirements worth checking independently of this extension: Windows must be in HDR mode, hardware-accelerated video decode must be on in Chrome (`chrome://settings/system`), and the effect must be enabled for Chrome in the NVIDIA app.
+
 ## Open question: does RTX Video HDR actually engage on these?
 
 Worth being upfront about: RTX Video HDR most likely hooks into the GPU's real video-decode/overlay surface — the special swapchain Chrome hands actual codec video (H.264/VP9/AV1) to the hardware decoder for. A `canvas.captureStream()`-backed `<video>`, even though it's a genuine, playing `<video>` element, gets composited through the ordinary canvas/texture path rather than that decode surface. It may satisfy the DOM definition of "a video" without ever touching the driver-level surface NVIDIA's filter watches for. If that's the case, this technique can convert images into "video" all day without RTX HDR ever engaging — it isn't a bug fixable with more JS. Not confirmed either way; the popup at least lets you verify the mundane stuff (detection, conversion, blocked reasons) so if HDR still doesn't kick in with everything converting cleanly, this architecture mismatch is the leading suspect.

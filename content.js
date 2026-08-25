@@ -325,4 +325,48 @@
     autoConvertAll = !!changes.autoConvertAll.newValue;
     if (autoConvertAll) scan();
   });
+
+  // Fullscreen hotkey for any <video> on the page — native ones (Instagram,
+  // etc.) included, not just ones this extension touched. RTX Video HDR/
+  // Super Resolution are driver-level features with no web API to invoke;
+  // there's nothing this extension can call to turn them on for a given
+  // video. But there are real reports they only engage once a video is
+  // displayed large enough, fullscreen being the reliable case — this just
+  // makes that cheap to test directly, in place, no popup/tab involved.
+  // Uses capture-phase listeners so it works even inside a site's own
+  // player controls, and never touches the page's DOM (no risk of
+  // disturbing a site's own player/React state).
+  let hoveredVideo = null;
+
+  document.addEventListener(
+    "mouseover",
+    (e) => {
+      const v = e.target && e.target.closest && e.target.closest("video");
+      if (v) hoveredVideo = v;
+    },
+    true
+  );
+
+  document.addEventListener(
+    "mouseout",
+    (e) => {
+      const v = e.target && e.target.closest && e.target.closest("video");
+      if (v && v === hoveredVideo) hoveredVideo = null;
+    },
+    true
+  );
+
+  document.addEventListener(
+    "keydown",
+    (e) => {
+      if (!e.altKey || e.ctrlKey || e.metaKey || e.shiftKey) return;
+      if (e.key.toLowerCase() !== "f") return;
+      if (!hoveredVideo || !hoveredVideo.isConnected) return;
+      e.preventDefault();
+      hoveredVideo.requestFullscreen().catch((err) => {
+        console.warn("RTX HDR Booster: fullscreen request failed", err);
+      });
+    },
+    true
+  );
 })();
