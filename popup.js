@@ -9,7 +9,6 @@ const openLocalBtn = document.getElementById("openLocal");
 let activeTabId = null;
 
 function statusLabel(item) {
-  if (item.kind === "video") return { text: "video", cls: "native" };
   if (item.status === "converted") return { text: "HDR", cls: "converted" };
   if (item.status === "blocked") return { text: "blocked", cls: "blocked" };
   if (item.status === "detected") return { text: "found", cls: "detected" };
@@ -75,15 +74,22 @@ function render(items, isImagePage, autoConvertAll) {
     meta.appendChild(srcEl);
     meta.appendChild(dimsEl);
 
-    const { text, cls } = statusLabel(item);
-    const badge = document.createElement("span");
-    badge.className = `badge ${cls}`;
-    badge.textContent = text;
-    if (item.reason) badge.title = item.reason;
+    const kindTag = document.createElement("span");
+    kindTag.className = `tag ${item.kind}`;
+    kindTag.textContent = item.kind === "video" ? "VID" : "IMG";
 
     li.appendChild(thumb);
     li.appendChild(meta);
-    li.appendChild(badge);
+    li.appendChild(kindTag);
+
+    if (item.kind !== "video") {
+      const { text, cls } = statusLabel(item);
+      const badge = document.createElement("span");
+      badge.className = `badge ${cls}`;
+      badge.textContent = text;
+      if (item.reason) badge.title = item.reason;
+      li.appendChild(badge);
+    }
 
     li.addEventListener("click", () => {
       chrome.tabs.create({ url: item.src });

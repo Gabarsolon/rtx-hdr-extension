@@ -138,7 +138,20 @@
   .badge.blocked { background: #3a1f1f; color: #e08181; }
   .badge.pending { background: #3a361f; color: #e0d081; }
   .badge.detected { background: #23262d; color: #9aa0aa; }
-  .badge.native { background: #1a2f3a; color: #7ec8e0; }
+  /* IMG / VID kind tag, separate from the status badge above */
+  .tag {
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.03em;
+    padding: 2px 5px;
+    border-radius: 4px;
+    flex-shrink: 0;
+    white-space: nowrap;
+    background: #1c1f26;
+    border: 1px solid #2a2d34;
+  }
+  .tag.image { color: #c9a9e0; border-color: #3a2a4a; }
+  .tag.video { color: #7ec8e0; border-color: #2a3f4a; }
   #empty {
     padding: 24px 12px;
     text-align: center;

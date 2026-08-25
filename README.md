@@ -31,7 +31,7 @@ Local files never need the CORS-bypass path — a `blob:` URL from a file you pi
 
 ## Use
 
-Click the toolbar icon any time to open the popup — it lists every sufficiently large image *and video* detected on the current tab: thumbnail, dimensions, and status. Images show `found` on a regular page / `HDR` converted / `blocked` / `pending` on a direct image tab (hover a `blocked` badge for the reason). Videos always show a blue `video` badge — a `<video>` element is already real video, so there's nothing to convert, it's just listed so you can see/open it. Click any row to open that image or video directly in a new tab. The popup's **Rescan** button forces a fresh detection pass.
+Click the toolbar icon any time to open the popup — it lists every sufficiently large image *and video* detected on the current tab: thumbnail, dimensions, an `IMG`/`VID` kind tag, and (for images) a status badge — `found` on a regular page / `HDR` converted / `blocked` / `pending` on a direct image tab (hover a `blocked` badge for the reason). Videos only get the kind tag — a `<video>` element is already real video, so there's nothing to convert, it's just listed so you can see/open it. Click any row to open that image or video directly in a new tab. The popup's **Rescan** button forces a fresh detection pass.
 
 ## Open question: does RTX Video HDR actually engage on these?
 
