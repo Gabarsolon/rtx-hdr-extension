@@ -362,14 +362,46 @@
     true
   );
 
+  // Falls back to "whichever playing video is most visible in the
+  // viewport" when hover-tracking comes up empty — plenty of sites
+  // (Instagram very much included) layer their own UI controls directly on
+  // top of the <video> with a higher z-index, so the mouse is actually
+  // hovering that overlay, not the video underneath, and closest("video")
+  // never finds it. This heuristic works even then, since there's usually
+  // exactly one video actually autoplaying on screen.
+  function pickTargetVideo() {
+    if (hoveredVideo && hoveredVideo.isConnected) return hoveredVideo;
+
+    const vw = window.innerWidth;
+    const vh = window.innerHeight;
+    let best = null;
+    let bestArea = 0;
+    for (const v of document.querySelectorAll("video")) {
+      if (!v.isConnected || v.paused || v.readyState === 0) continue;
+      const r = v.getBoundingClientRect();
+      const visibleW = Math.max(0, Math.min(r.right, vw) - Math.max(r.left, 0));
+      const visibleH = Math.max(0, Math.min(r.bottom, vh) - Math.max(r.top, 0));
+      const area = visibleW * visibleH;
+      if (area > bestArea) {
+        bestArea = area;
+        best = v;
+      }
+    }
+    return best;
+  }
+
   document.addEventListener(
     "keydown",
     (e) => {
       if (!e.altKey || !e.shiftKey || e.ctrlKey || e.metaKey) return;
       if (e.key.toLowerCase() !== "f") return;
-      if (!hoveredVideo || !hoveredVideo.isConnected) return;
+      const target = pickTargetVideo();
+      if (!target) {
+        console.warn("RTX HDR Booster: Alt+Shift+F pressed but no video found (hover one, or make sure one is playing on screen)");
+        return;
+      }
       e.preventDefault();
-      hoveredVideo.requestFullscreen().catch((err) => {
+      target.requestFullscreen().catch((err) => {
         console.warn("RTX HDR Booster: fullscreen request failed", err);
       });
     },
