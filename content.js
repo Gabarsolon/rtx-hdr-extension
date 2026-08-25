@@ -1,10 +1,16 @@
-// Detects images AND videos on every page (for the popup's list), but only
-// *converts* an image to a live video stream when the tab itself is a
-// directly-opened image — i.e. Chrome's built-in single-image viewer, where
-// document.contentType starts with "image/". Regular pages that merely
-// embed <img> tags get detected and listed, but left untouched. <video>
-// elements are already real videos — nothing to convert — so they're just
-// detected and listed for visibility/opening, same as images.
+// Detects images, videos, AND streams on every page (for the popup's
+// list), but only *converts* an image to a live video stream when the tab
+// itself is a directly-opened image — i.e. Chrome's built-in single-image
+// viewer, where document.contentType starts with "image/". Regular pages
+// that merely embed <img> tags get detected and listed, but left
+// untouched. <video> elements are already real videos — nothing to
+// convert — so they're just detected and listed for visibility/opening,
+// same as images. "Streams" covers two cases DOM inspection alone can't:
+// live WebRTC/getUserMedia video (video.srcObject, no URL at all) and
+// MSE-backed players like Instagram/Twitter/TikTok, where the <video>
+// element's own src is just a page-scoped blob: URL — their real segment
+// URLs only ever show up as network requests, sniffed here via
+// PerformanceObserver.
 (function () {
   if (window.__rtxHdrBoosterInstalled) return;
   window.__rtxHdrBoosterInstalled = true;
@@ -15,13 +21,16 @@
   let totalConverted = 0;
   let autoConvertAll = false; // toggled from the popup, persisted in chrome.storage.sync
 
-  // Registry of every image/video we've looked at, keyed by src — powers the
-  // popup's "detected" list. Each entry has a "kind": "image" | "video".
+  // Registry of every image/video/stream we've looked at, keyed by src (or
+  // a synthetic key for sourceless live streams) — powers the popup's
+  // "detected" list. Each entry has a "kind": "image" | "video" | "stream".
   // Image entries have a status, one of:
   //   "converted" | "blocked" | "pending" | "detected"
   // ("detected" = found on a regular page, never attempted — conversion
-  // only runs on image pages.) Video entries are always "native" — they're
-  // already real <video> elements, nothing to convert.
+  // only runs on image pages.) Video/stream entries are always "native" —
+  // they're already real video, nothing to convert. Stream entries also
+  // carry "openable": false for live WebRTC (no URL exists at all) vs true
+  // for sniffed CDN segment URLs (a real, if possibly time-limited, URL).
   const registry = new Map();
 
   function setStatus(src, patch) {
@@ -153,17 +162,62 @@
     doConversion(img);
   }
 
+  // Re-checks a video once its metadata/dimensions might have shown up —
+  // covers both the "still loading" and "still 0x0" cases below.
+  function watchForMetadata(video) {
+    video.addEventListener("loadedmetadata", () => attemptDetectVideo(video), { once: true });
+    video.addEventListener("resize", () => attemptDetectVideo(video), { once: true });
+  }
+
+  let streamCounter = 0;
+  const streamKeys = new WeakMap();
+  function keyForStream(video) {
+    if (!streamKeys.has(video)) streamKeys.set(video, `stream:${location.href}#${++streamCounter}`);
+    return streamKeys.get(video);
+  }
+
   // Videos are already real <video> elements — no conversion needed, just
   // list them. currentSrc is used over .src since it's what the browser
   // actually resolved (handles <source> children, picks the active track).
   function attemptDetectVideo(video) {
     if (video.dataset.rtxHdrSeen) return;
 
+    if (video.srcObject) {
+      // Fed by getUserMedia/WebRTC (or occasionally a raw MediaSource) —
+      // there's no URL on the element at all. currentSrc stays "" per spec
+      // whenever srcObject is used, so this can't be treated as "not
+      // resolved yet" the way a missing src attribute can.
+      const w = video.videoWidth || video.clientWidth;
+      const h = video.videoHeight || video.clientHeight;
+      if (w * h === 0) {
+        watchForMetadata(video);
+        return;
+      }
+      if (w * h < MIN_AREA) return;
+      video.dataset.rtxHdrSeen = "1";
+      setStatus(keyForStream(video), {
+        kind: "stream",
+        label: "Live stream",
+        width: w,
+        height: h,
+        status: "native",
+        openable: false,
+      });
+      return;
+    }
+
     const src = video.currentSrc || video.src;
     if (!src) {
       // Not resolved yet (e.g. <source> children still loading) — try
       // again once metadata is available.
-      video.addEventListener("loadedmetadata", () => attemptDetectVideo(video), { once: true });
+      watchForMetadata(video);
+      return;
+    }
+    if (src.startsWith("blob:")) {
+      // MSE-backed player (hls.js/dash.js/Shaka — Instagram, Twitter,
+      // TikTok, etc.) — this URL is page-scoped and won't resolve in a new
+      // tab anyway. The network-level sniffer below finds the real,
+      // openable segment URLs for these instead.
       return;
     }
 
@@ -173,6 +227,46 @@
 
     video.dataset.rtxHdrSeen = "1";
     setStatus(src, { kind: "video", width: w, height: h, status: "native" });
+  }
+
+  // Catches streamed video that never appears as a clean element src: MSE
+  // players fetch their actual segments (real CDN URLs, often signed/
+  // time-limited) via fetch()/XHR, which — unlike the <video> element's own
+  // blob: src — do show up as ordinary "resource" performance entries.
+  const STREAM_URL_PATTERN = /\.(mp4|m3u8|mpd|webm|ts)(\?|$)|[?&](bytestart|byterange|range)=/i;
+  const sniffedStreamKeys = new Set();
+
+  function maybeRegisterStreamUrl(rawUrl) {
+    let url;
+    try {
+      url = new URL(rawUrl, location.href);
+    } catch (e) {
+      return;
+    }
+    if (!/^https?:$/.test(url.protocol)) return;
+    if (!STREAM_URL_PATTERN.test(url.pathname + url.search)) return;
+
+    // Dedupe by origin+pathname so repeated byte-range segment requests for
+    // the same clip collapse into a single listing (only the first URL seen
+    // is kept, so the query string — including any signature — is real).
+    const key = url.origin + url.pathname;
+    if (sniffedStreamKeys.has(key)) return;
+    sniffedStreamKeys.add(key);
+
+    setStatus(rawUrl, { kind: "stream", width: 0, height: 0, status: "native", openable: true });
+  }
+
+  if (window.PerformanceObserver) {
+    try {
+      const perfObserver = new PerformanceObserver((list) => {
+        for (const entry of list.getEntries()) maybeRegisterStreamUrl(entry.name);
+      });
+      // buffered: true also picks up requests that fired before this
+      // content script attached.
+      perfObserver.observe({ type: "resource", buffered: true });
+    } catch (e) {
+      // PerformanceObserver unsupported/blocked in this context — skip.
+    }
   }
 
   function scan() {

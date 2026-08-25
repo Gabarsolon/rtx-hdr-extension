@@ -31,7 +31,16 @@ Local files never need the CORS-bypass path — a `blob:` URL from a file you pi
 
 ## Use
 
-Click the toolbar icon any time to open the popup — it lists every sufficiently large image *and video* detected on the current tab: thumbnail, dimensions, an `IMG`/`VID` kind tag, and (for images) a status badge — `found` on a regular page / `HDR` converted / `blocked` / `pending` on a direct image tab (hover a `blocked` badge for the reason). Videos only get the kind tag — a `<video>` element is already real video, so there's nothing to convert, it's just listed so you can see/open it. Click any row to open that image or video directly in a new tab. The popup's **Rescan** button forces a fresh detection pass.
+Click the toolbar icon any time to open the popup — it lists every sufficiently large image, video, *and stream* detected on the current tab: thumbnail, dimensions, an `IMG`/`VID`/`STREAM` kind tag, and (for images) a status badge — `found` on a regular page / `HDR` converted / `blocked` / `pending` on a direct image tab (hover a `blocked` badge for the reason). Videos and streams only get the kind tag — they're already real video, so there's nothing to convert, they're just listed so you can see/open them. Click any row to open that item directly in a new tab, except dimmed stream rows with no stable URL (see below). The popup's **Rescan** button forces a fresh detection pass.
+
+### What counts as a "stream"
+
+Plenty of sites (Instagram, Twitter/X, TikTok, YouTube, most livestream players) don't give their `<video>` element a normal file URL — they feed it through [MSE](https://developer.mozilla.org/en-US/docs/Web/API/Media_Source_Extensions_API), so `video.currentSrc` is just a `blob:` URL that's scoped to that page and useless to open in a new tab. Two things happen instead:
+
+- **Live/WebRTC video** (`video.srcObject` set directly — camera/call feeds): detected, but shown dimmed and unclickable, since there's genuinely no URL for it anywhere.
+- **MSE-backed players**: the `<video>` element's own `blob:` src is ignored, and instead a `PerformanceObserver` watches the page's real network requests for video-shaped URLs (`.mp4`/`.m3u8`/`.mpd`/`.webm`/`.ts`, or byte-range query params like Instagram's `bytestart=`/`byteend=`) and lists the **actual CDN URL** — openable, since it's a real request the browser already made. These URLs are often signed with an expiry (e.g. Instagram's `oe=` param), so a captured one can go stale after a while.
+
+This is heuristic (pattern-matching request URLs, since the Performance API doesn't expose content-type), so it can occasionally miss an unusual CDN or pick up an unrelated resource that happens to match the pattern.
 
 ## Open question: does RTX Video HDR actually engage on these?
 

@@ -27,7 +27,7 @@ function filenameOf(src) {
 
 function render(items, isImagePage, autoConvertAll) {
   listEl.innerHTML = "";
-  emptyEl.textContent = "No images or videos detected on this tab yet.";
+  emptyEl.textContent = "No images, videos, or streams detected on this tab yet.";
 
   const activeConversion = isImagePage || autoConvertAll;
   hintEl.style.display = activeConversion ? "none" : "block";
@@ -39,22 +39,23 @@ function render(items, isImagePage, autoConvertAll) {
   }
   emptyEl.style.display = "none";
 
+  const streamCount = items.filter((i) => i.kind === "stream").length;
   const videoCount = items.filter((i) => i.kind === "video").length;
-  const imageCount = items.length - videoCount;
+  const imageCount = items.length - videoCount - streamCount;
   const converted = items.filter((i) => i.status === "converted").length;
   const blocked = items.filter((i) => i.status === "blocked").length;
   countEl.textContent = activeConversion
-    ? `${imageCount} images (${converted} converted, ${blocked} blocked) · ${videoCount} videos`
-    : `${imageCount} images · ${videoCount} videos · click one to open it directly`;
+    ? `${imageCount} images (${converted} converted, ${blocked} blocked) · ${videoCount} videos · ${streamCount} streams`
+    : `${imageCount} images · ${videoCount} videos · ${streamCount} streams · click an openable row to open it`;
 
   for (const item of items) {
     const li = document.createElement("li");
 
     let thumb;
-    if (item.kind === "video") {
+    if (item.kind === "video" || item.kind === "stream") {
       thumb = document.createElement("div");
       thumb.className = "thumb video-thumb";
-      thumb.textContent = "🎬";
+      thumb.textContent = item.kind === "stream" ? "📡" : "🎬";
     } else {
       thumb = document.createElement("img");
       thumb.className = "thumb";
@@ -66,8 +67,8 @@ function render(items, isImagePage, autoConvertAll) {
     meta.className = "meta";
     const srcEl = document.createElement("div");
     srcEl.className = "src";
-    srcEl.textContent = filenameOf(item.src);
-    srcEl.title = item.src;
+    srcEl.textContent = item.label || filenameOf(item.src);
+    srcEl.title = item.label ? `${item.label} — no stable URL to open` : item.src;
     const dimsEl = document.createElement("div");
     dimsEl.className = "dims";
     dimsEl.textContent = item.width && item.height ? `${item.width}×${item.height}` : "";
@@ -76,13 +77,13 @@ function render(items, isImagePage, autoConvertAll) {
 
     const kindTag = document.createElement("span");
     kindTag.className = `tag ${item.kind}`;
-    kindTag.textContent = item.kind === "video" ? "VID" : "IMG";
+    kindTag.textContent = item.kind === "video" ? "VID" : item.kind === "stream" ? "STREAM" : "IMG";
 
     li.appendChild(thumb);
     li.appendChild(meta);
     li.appendChild(kindTag);
 
-    if (item.kind !== "video") {
+    if (item.kind === "image") {
       const { text, cls } = statusLabel(item);
       const badge = document.createElement("span");
       badge.className = `badge ${cls}`;
@@ -91,9 +92,14 @@ function render(items, isImagePage, autoConvertAll) {
       li.appendChild(badge);
     }
 
-    li.addEventListener("click", () => {
-      chrome.tabs.create({ url: item.src });
-    });
+    if (item.openable === false) {
+      li.classList.add("not-openable");
+      li.title = "No stable URL to open (live/WebRTC stream) — this is a detection-only listing.";
+    } else {
+      li.addEventListener("click", () => {
+        chrome.tabs.create({ url: item.src });
+      });
+    }
 
     listEl.appendChild(li);
   }

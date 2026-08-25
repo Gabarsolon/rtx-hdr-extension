@@ -152,6 +152,9 @@
   }
   .tag.image { color: #c9a9e0; border-color: #3a2a4a; }
   .tag.video { color: #7ec8e0; border-color: #2a3f4a; }
+  .tag.stream { color: #e0b96b; border-color: #4a3a1f; }
+  li.not-openable { cursor: default; opacity: 0.75; }
+  li.not-openable:hover { background: transparent; }
   #empty {
     padding: 24px 12px;
     text-align: center;
@@ -183,7 +186,7 @@
     <span>Open a picture or folder from your PC</span>
     <button id="openLocal">Open…</button>
   </div>
-  <div id="hint">Images here are only <strong>listed</strong>, not converted — open one directly (click a row) to actually HDR-ify it, or flip the toggle above to convert everywhere automatically. Videos are already real videos, so they're just listed for you to open.</div>
+  <div id="hint">Images here are only <strong>listed</strong>, not converted — open one directly (click a row) to actually HDR-ify it, or flip the toggle above to convert everywhere automatically. Videos and streams are already real video, so they're just listed for you to open — dimmed stream rows have no stable URL (live/WebRTC) and can't be opened.</div>
   <div class="count" id="count" style="padding: 6px 12px;"></div>
   <ul id="list"></ul>
   <div id="empty" style="display:none;">No images detected on this tab yet.</div>
