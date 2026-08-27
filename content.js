@@ -55,6 +55,10 @@
   // without ongoing redraws the "video" is just a frozen frame-0 stream.
   // Detected by extension since the Performance/Image APIs don't expose an
   // animated-vs-static flag cheaply.
+  // How long to hold a converted GIF on its first frame before letting it
+  // actually start animating — see the comment in startGifDecodeLoop.
+  const HDR_SETTLE_MS = 1500;
+
   function isGifSrc(src) {
     try {
       const u = new URL(src, location.href);
@@ -152,7 +156,15 @@
       setTimeout(playNext, Math.max(20, durationMs));
     }
 
-    playNext();
+    // Hold on frame 0 for a beat before the content starts actually
+    // changing. Frame 0 is already on the canvas (drawAndCapture drew it
+    // before this function ever ran) — a totally static single-draw stream
+    // is exactly the case that's been observed to get RTX HDR applied, so
+    // this gives the driver the same settle window before frames start
+    // moving, on the theory that RTX needs a moment to lock onto a stream
+    // once playback begins and continuous changes right from the first
+    // frame might be interrupting that. Unconfirmed, but cheap to try.
+    setTimeout(playNext, HDR_SETTLE_MS);
     return true;
   }
 
@@ -178,7 +190,9 @@
       ctx.drawImage(sourceImg, 0, 0, w, h);
       requestAnimationFrame(tick);
     }
-    requestAnimationFrame(tick);
+    // Same settle-window idea as the primary decode path — see the comment
+    // in startGifDecodeLoop.
+    setTimeout(() => requestAnimationFrame(tick), HDR_SETTLE_MS);
   }
 
   function animate(bytesUrl, sourceImg, canvas, ctx, w, h, video) {
