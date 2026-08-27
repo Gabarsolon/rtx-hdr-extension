@@ -10,7 +10,10 @@
 // MSE-backed players like Instagram/Twitter/TikTok, where the <video>
 // element's own src is just a page-scoped blob: URL — their real segment
 // URLs only ever show up as network requests, sniffed here via
-// PerformanceObserver.
+// PerformanceObserver. GIFs get special handling in the conversion path
+// itself (see isGifSrc/startAnimationLoop below): a plain single draw would
+// only ever capture frame 0, so animated sources are kept alive, hidden, in
+// the DOM and continuously redrawn into the canvas instead.
 (function () {
   if (window.__rtxHdrBoosterInstalled) return;
   window.__rtxHdrBoosterInstalled = true;
@@ -46,7 +49,21 @@
     }
   }
 
-  function swap(img, canvas, stream, src) {
+  // GIFs are the one case where a single draw-and-capture isn't enough:
+  // captureStream() snapshots whatever's on the canvas at that instant, so
+  // without ongoing redraws the "video" is just a frozen frame-0 stream.
+  // Detected by extension since the Performance/Image APIs don't expose an
+  // animated-vs-static flag cheaply.
+  function isGifSrc(src) {
+    try {
+      const u = new URL(src, location.href);
+      return /\.gif(?:[?#]|$)/i.test(u.pathname);
+    } catch (e) {
+      return /\.gif(?:[?#]|$)/i.test(src);
+    }
+  }
+
+  function swap(img, canvas, stream, src, animatedSource) {
     const video = document.createElement("video");
     video.srcObject = stream;
     video.autoplay = true;
@@ -57,11 +74,43 @@
     video.className = img.className;
     if (img.width) video.width = img.width;
     if (img.height) video.height = img.height;
+
+    if (animatedSource) {
+      // Chrome only advances a GIF's frames while the <img> showing it is
+      // actually connected to the render tree — removed/detached images
+      // freeze on whatever frame they were on. So for an animated source we
+      // can't just discard the original <img> the way the static path does;
+      // it has to stay in the DOM, just made invisible. Critically this is
+      // the SAME element that was already loaded and decoding (or, for the
+      // CORS-bypass retry, the fresh data: URL <img> that replaces it) —
+      // never an off-screen clone. An earlier version cloned the img and
+      // parked it miles off-screen, which could inherit a loading="lazy"
+      // attribute from the original and then never load at all, since the
+      // browser's lazy-load heuristic saw it as permanently out of view.
+      // Hiding via opacity/pointer-events keeps it "rendered" (and thus
+      // animating) without taking up layout space or being visible/clickable.
+      if (animatedSource !== img) {
+        img.insertAdjacentElement("afterend", animatedSource);
+      }
+      animatedSource.style.position = "absolute";
+      animatedSource.style.opacity = "0";
+      animatedSource.style.pointerEvents = "none";
+      animatedSource.removeAttribute("loading");
+      animatedSource.setAttribute("aria-hidden", "true");
+    }
+
     img.replaceWith(video);
+    if (animatedSource === img) {
+      // img IS the redraw source and has to stay connected — put it back
+      // right after the new video, now hidden.
+      video.insertAdjacentElement("afterend", img);
+    }
+
     video.play().catch(() => {});
     totalConverted++;
     setStatus(src, { status: "converted" });
     reportCount();
+    return video;
   }
 
   // Draws sourceImg into canvas and captures it. captureStream() throws
@@ -73,10 +122,25 @@
     return canvas.captureStream(30);
   }
 
+  // Keeps redrawing sourceImg into canvas every animation frame for as long
+  // as the resulting video stays connected — captureStream(30) just samples
+  // whatever's currently on the canvas 30x/sec, so this is what actually
+  // makes a converted GIF play instead of freezing on frame 0.
+  function startAnimationLoop(sourceImg, canvas, ctx, w, h, video) {
+    function tick() {
+      if (!video.isConnected) return; // conversion undone/navigated away — stop
+      ctx.clearRect(0, 0, w, h);
+      ctx.drawImage(sourceImg, 0, 0, w, h);
+      requestAnimationFrame(tick);
+    }
+    requestAnimationFrame(tick);
+  }
+
   function doConversion(img) {
     const w = img.naturalWidth;
     const h = img.naturalHeight;
     const src = img.src;
+    const animated = isGifSrc(src);
     const canvas = document.createElement("canvas");
     canvas.width = w;
     canvas.height = h;
@@ -84,7 +148,8 @@
 
     try {
       const stream = drawAndCapture(canvas, ctx, img, w, h);
-      swap(img, canvas, stream, src);
+      const video = swap(img, canvas, stream, src, animated ? img : null);
+      if (animated) startAnimationLoop(img, canvas, ctx, w, h, video);
       return;
     } catch (e) {
       // Tainted canvas — cross-origin image whose CDN doesn't send
@@ -112,7 +177,8 @@
         const retryCtx = retryCanvas.getContext("2d");
         try {
           const stream = drawAndCapture(retryCanvas, retryCtx, fresh, w, h);
-          swap(img, retryCanvas, stream, src);
+          const video = swap(img, retryCanvas, stream, src, animated ? fresh : null);
+          if (animated) startAnimationLoop(fresh, retryCanvas, retryCtx, w, h, video);
         } catch (e2) {
           console.warn("RTX HDR Booster: still tainted after data-URL retry, skipped", src);
           setStatus(src, { status: "blocked", reason: "tainted after retry" });

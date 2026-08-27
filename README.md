@@ -42,6 +42,10 @@ Plenty of sites (Instagram, Twitter/X, TikTok, YouTube, most livestream players)
 
 This is heuristic (pattern-matching request URLs, since the Performance API doesn't expose content-type), so it can occasionally miss an unusual CDN or pick up an unrelated resource that happens to match the pattern.
 
+## GIFs
+
+Animated GIFs get converted too, and actually keep playing — not just a single frame frozen and passed through HDR. A plain `canvas.captureStream()` only ever samples the canvas once, so without extra work a converted GIF would look "HDR'd" but static. Instead, the source image is kept alive (hidden, not removed) in the page and redrawn into the canvas every frame for as long as the converted video is on the page, so the capture stream actually shows the animation.
+
 ## Fullscreen hotkey for any video (Alt+Shift+F)
 
 Press **Alt+Shift+F** to `requestFullscreen()` a video directly, in place. No popup, no new tab, nothing else on the page touched. (Not plain Alt+F — that's Chrome's own shortcut for its 3-dot menu, and the browser eats it before a page ever sees the keydown.)
