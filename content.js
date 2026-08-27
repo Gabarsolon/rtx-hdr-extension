@@ -11,9 +11,10 @@
 // element's own src is just a page-scoped blob: URL — their real segment
 // URLs only ever show up as network requests, sniffed here via
 // PerformanceObserver. GIFs get special handling in the conversion path
-// itself (see isGifSrc/startAnimationLoop below): a plain single draw would
-// only ever capture frame 0, so animated sources are kept alive, hidden, in
-// the DOM and continuously redrawn into the canvas instead.
+// itself (see isGifSrc/startGifDecodeLoop below): a plain single draw would
+// only ever capture frame 0, so animated sources are decoded frame-by-frame
+// with WebCodecs' ImageDecoder and painted on a timer, independent of
+// whatever Chrome itself does with the (now hidden) original <img>.
 (function () {
   if (window.__rtxHdrBoosterInstalled) return;
   window.__rtxHdrBoosterInstalled = true;
@@ -63,7 +64,7 @@
     }
   }
 
-  function swap(img, canvas, stream, src, animatedSource) {
+  function swap(img, canvas, stream, src) {
     const video = document.createElement("video");
     video.srcObject = stream;
     video.autoplay = true;
@@ -74,38 +75,7 @@
     video.className = img.className;
     if (img.width) video.width = img.width;
     if (img.height) video.height = img.height;
-
-    if (animatedSource) {
-      // Chrome only advances a GIF's frames while the <img> showing it is
-      // actually connected to the render tree — removed/detached images
-      // freeze on whatever frame they were on. So for an animated source we
-      // can't just discard the original <img> the way the static path does;
-      // it has to stay in the DOM, just made invisible. Critically this is
-      // the SAME element that was already loaded and decoding (or, for the
-      // CORS-bypass retry, the fresh data: URL <img> that replaces it) —
-      // never an off-screen clone. An earlier version cloned the img and
-      // parked it miles off-screen, which could inherit a loading="lazy"
-      // attribute from the original and then never load at all, since the
-      // browser's lazy-load heuristic saw it as permanently out of view.
-      // Hiding via opacity/pointer-events keeps it "rendered" (and thus
-      // animating) without taking up layout space or being visible/clickable.
-      if (animatedSource !== img) {
-        img.insertAdjacentElement("afterend", animatedSource);
-      }
-      animatedSource.style.position = "absolute";
-      animatedSource.style.opacity = "0";
-      animatedSource.style.pointerEvents = "none";
-      animatedSource.removeAttribute("loading");
-      animatedSource.setAttribute("aria-hidden", "true");
-    }
-
     img.replaceWith(video);
-    if (animatedSource === img) {
-      // img IS the redraw source and has to stay connected — put it back
-      // right after the new video, now hidden.
-      video.insertAdjacentElement("afterend", img);
-    }
-
     video.play().catch(() => {});
     totalConverted++;
     setStatus(src, { status: "converted" });
@@ -122,18 +92,99 @@
     return canvas.captureStream(30);
   }
 
-  // Keeps redrawing sourceImg into canvas every animation frame for as long
-  // as the resulting video stays connected — captureStream(30) just samples
-  // whatever's currently on the canvas 30x/sec, so this is what actually
-  // makes a converted GIF play instead of freezing on frame 0.
-  function startAnimationLoop(sourceImg, canvas, ctx, w, h, video) {
+  // Primary GIF-animation path: decode the file's actual frames ourselves
+  // with WebCodecs' ImageDecoder and paint them on a timer matched to each
+  // frame's real duration. This sidesteps Chrome's own (and apparently
+  // unreliable in practice) decision about whether a hidden/off-canvas <img>
+  // keeps animating — we never rely on the browser's built-in GIF player at
+  // all past the very first frame. bytesUrl is fetched fresh here (not read
+  // off the <img> itself) since Image elements don't expose their raw bytes.
+  async function startGifDecodeLoop(bytesUrl, canvas, ctx, w, h, video) {
+    if (!window.ImageDecoder) return false;
+
+    let buf;
+    try {
+      buf = await fetch(bytesUrl).then((r) => r.arrayBuffer());
+    } catch (e) {
+      return false;
+    }
+
+    let decoder;
+    try {
+      decoder = new ImageDecoder({ data: buf, type: "image/gif" });
+      await decoder.tracks.ready;
+      await decoder.completed; // ensures frameCount is fully known, not still growing
+    } catch (e) {
+      try { decoder && decoder.close(); } catch (e2) {}
+      return false;
+    }
+
+    const track = decoder.tracks.selectedTrack;
+    const frameCount = (track && track.frameCount) || 1;
+    if (frameCount <= 1) {
+      decoder.close();
+      return false; // not actually animated — the single frame already drawn is enough
+    }
+
+    let frameIndex = 0;
+    let stopped = false;
+
+    async function playNext() {
+      if (stopped || !video.isConnected) {
+        stopped = true;
+        decoder.close();
+        return;
+      }
+      let result;
+      try {
+        result = await decoder.decode({ frameIndex });
+      } catch (e) {
+        stopped = true;
+        decoder.close();
+        return;
+      }
+      const frame = result.image;
+      ctx.clearRect(0, 0, w, h);
+      ctx.drawImage(frame, 0, 0, w, h);
+      const durationMs = frame.duration ? frame.duration / 1000 : 100;
+      frame.close();
+      frameIndex = (frameIndex + 1) % frameCount;
+      setTimeout(playNext, Math.max(20, durationMs));
+    }
+
+    playNext();
+    return true;
+  }
+
+  // Fallback GIF-animation path for when ImageDecoder isn't available: keep
+  // the source <img> connected to the DOM (hidden, not removed — Chrome only
+  // advances a GIF's frames while its <img> is part of the render tree) and
+  // keep redrawing it into the canvas every animation frame. Less reliable
+  // than the decode-it-ourselves path above (depends on the browser actually
+  // continuing to animate a hidden element, which isn't guaranteed), kept
+  // only as a second line of defense on browsers without WebCodecs support.
+  function startLegacyRedrawLoop(sourceImg, canvas, ctx, w, h, video) {
+    sourceImg.style.position = "absolute";
+    sourceImg.style.opacity = "0";
+    sourceImg.style.pointerEvents = "none";
+    sourceImg.removeAttribute("loading");
+    sourceImg.setAttribute("aria-hidden", "true");
+    if (!sourceImg.isConnected) {
+      video.insertAdjacentElement("afterend", sourceImg);
+    }
     function tick() {
-      if (!video.isConnected) return; // conversion undone/navigated away — stop
+      if (!video.isConnected) return;
       ctx.clearRect(0, 0, w, h);
       ctx.drawImage(sourceImg, 0, 0, w, h);
       requestAnimationFrame(tick);
     }
     requestAnimationFrame(tick);
+  }
+
+  function animate(bytesUrl, sourceImg, canvas, ctx, w, h, video) {
+    startGifDecodeLoop(bytesUrl, canvas, ctx, w, h, video).then((ok) => {
+      if (!ok) startLegacyRedrawLoop(sourceImg, canvas, ctx, w, h, video);
+    });
   }
 
   function doConversion(img) {
@@ -148,8 +199,8 @@
 
     try {
       const stream = drawAndCapture(canvas, ctx, img, w, h);
-      const video = swap(img, canvas, stream, src, animated ? img : null);
-      if (animated) startAnimationLoop(img, canvas, ctx, w, h, video);
+      const video = swap(img, canvas, stream, src);
+      if (animated) animate(src, img, canvas, ctx, w, h, video);
       return;
     } catch (e) {
       // Tainted canvas — cross-origin image whose CDN doesn't send
@@ -177,8 +228,11 @@
         const retryCtx = retryCanvas.getContext("2d");
         try {
           const stream = drawAndCapture(retryCanvas, retryCtx, fresh, w, h);
-          const video = swap(img, retryCanvas, stream, src, animated ? fresh : null);
-          if (animated) startAnimationLoop(fresh, retryCanvas, retryCtx, w, h, video);
+          const video = swap(img, retryCanvas, stream, src);
+          // resp.dataUrl is already the raw bytes as a data: URL — reuse it
+          // directly instead of re-fetching src (which would just fail with
+          // the same CORS error all over again).
+          if (animated) animate(resp.dataUrl, fresh, retryCanvas, retryCtx, w, h, video);
         } catch (e2) {
           console.warn("RTX HDR Booster: still tainted after data-URL retry, skipped", src);
           setStatus(src, { status: "blocked", reason: "tainted after retry" });

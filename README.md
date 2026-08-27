@@ -44,7 +44,9 @@ This is heuristic (pattern-matching request URLs, since the Performance API does
 
 ## GIFs
 
-Animated GIFs get converted too, and actually keep playing — not just a single frame frozen and passed through HDR. A plain `canvas.captureStream()` only ever samples the canvas once, so without extra work a converted GIF would look "HDR'd" but static. Instead, the source image is kept alive (hidden, not removed) in the page and redrawn into the canvas every frame for as long as the converted video is on the page, so the capture stream actually shows the animation.
+Animated GIFs get converted too, and actually keep playing — not just a single frame frozen and passed through HDR. A plain `canvas.captureStream()` only ever samples the canvas once, so without extra work a converted GIF would look "HDR'd" but static.
+
+The fix decodes the GIF's actual frames itself, using the browser's [`ImageDecoder`](https://developer.mozilla.org/en-US/docs/Web/API/ImageDecoder) API (WebCodecs), and paints each one on a timer matched to its real duration — it doesn't rely on Chrome's own built-in GIF player continuing to run once the source `<img>` is out of sight, which turned out not to be a safe assumption (an earlier version tried keeping the `<img>` alive-but-hidden and redrawing it, and that alone wasn't reliable). If `ImageDecoder` isn't available for some reason, it falls back to that hidden-`<img>`-redraw approach as a second try.
 
 ## Fullscreen hotkey for any video (Alt+Shift+F)
 
