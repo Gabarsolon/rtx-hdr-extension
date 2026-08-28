@@ -60,6 +60,8 @@ It uses whichever video you're hovering if that resolves cleanly, but falls back
 
 **After updating this extension, remember to also refresh any tab that was already open** — reloading the extension at `chrome://extensions` does not retroactively re-inject the content script into tabs that loaded before the reload.
 
+If it doesn't fire at all on some site (no console warning, nothing): the listener is registered on `window` in the capture phase specifically so it runs before any page-level handler could see or swallow the keydown first — sites with their own custom player (Mega.nz among them) often have a global shortcut handler for space/arrows/"f" that can eat a broad range of keydowns, sometimes checking only the key and not the modifiers.
+
 This exists because RTX Video HDR and RTX Video Super Resolution are driver/GPU-level features with **no web API** — there's no JS or DOM hook an extension (or the page itself) can call to turn them on for a specific video. Whether they engage is entirely up to NVIDIA's own heuristics, but there are real reports that on-screen video size matters, with fullscreen being the reliable case. Alt+F just makes that cheap to test; it doesn't guarantee anything actually engages. Other known requirements worth checking independently of this extension: Windows must be in HDR mode, hardware-accelerated video decode must be on in Chrome (`chrome://settings/system`), and the effect must be enabled for Chrome in the NVIDIA app.
 
 ## Open question: does RTX Video HDR actually engage on these?

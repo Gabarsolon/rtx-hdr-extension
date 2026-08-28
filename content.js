@@ -510,7 +510,18 @@
     return best;
   }
 
-  document.addEventListener(
+  // Registered on window, not document, and as the very first capture
+  // listener added in this frame: capture-phase dispatch always visits
+  // window before document before anything else, so this runs before any
+  // page-level keydown handler could see the event, let alone
+  // stopPropagation()/stopImmediatePropagation() it. That matters a lot in
+  // practice — plenty of sites with their own video player (Mega.nz
+  // included) register their own global keyboard-shortcut handler (space,
+  // arrows, "f" for their own fullscreen toggle) that swallows keydowns
+  // broadly, sometimes checking only e.key and ignoring modifiers, which
+  // would eat an Alt+Shift+F meant for us before a document-level listener
+  // ever got a look at it.
+  window.addEventListener(
     "keydown",
     (e) => {
       if (!e.altKey || !e.shiftKey || e.ctrlKey || e.metaKey) return;
@@ -521,6 +532,7 @@
         return;
       }
       e.preventDefault();
+      e.stopPropagation(); // don't let the page's own handler act on it too
       target.requestFullscreen().catch((err) => {
         console.warn("RTX HDR Booster: fullscreen request failed", err);
       });
