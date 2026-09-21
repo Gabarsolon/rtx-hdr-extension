@@ -130,9 +130,9 @@
     return seg;
   }
 
-  // Finds the byte offset to insert our APP1/XMP segment at: right after
-  // SOI, but after any existing APP0/JFIF segment(s) so JFIF's "APP0 must
-  // be first" convention is preserved for maximum compatibility.
+  // Finds the byte offset to insert our new segments at: right after SOI,
+  // but after any existing APP0/JFIF segment(s) so JFIF's "APP0 must be
+  // first" convention is preserved for maximum compatibility.
   function findInsertionPoint(buf) {
     let pos = 2; // past SOI (FF D8)
     while (pos + 4 <= buf.length && buf[pos] === 0xff && buf[pos + 1] === 0xe0) {
@@ -142,14 +142,116 @@
     return pos;
   }
 
-  async function insertXmpSegment(jpegBlob, xmpString) {
-    const buf = new Uint8Array(await jpegBlob.arrayBuffer());
-    const app1 = buildXmpApp1Segment(xmpString);
+  // CIPA MPF (Multi-Picture Format, DC-007) APP2 segment: a binary
+  // TIFF-style index giving the byte offset/length of each embedded image.
+  // The XMP Container metadata above *describes* the gain map, but it's
+  // this segment real HDR viewers (Windows Photos included) actually use
+  // to locate it in the file — Google's own Ultra HDR files carry both,
+  // and a first version of this exporter that only had the XMP half
+  // produced files that opened fine but never rendered as HDR anywhere.
+  //
+  // Structure (all multi-byte fields big-endian, "MM" TIFF byte order):
+  //   APP2 marker(2) + length(2) + "MPF\0"(4)
+  //   -- TIFF header (offset 0 from here) --
+  //   byte-order "MM"(2) + magic 0x002A(2) + IFD0 offset=8(4)
+  //   -- IFD0 --
+  //   entry count=3(2)
+  //     0xB000 MPFVersion,    UNDEFINED, count 4,  "0100"
+  //     0xB001 NumberOfImages,LONG,      count 1,  2
+  //     0xB002 MPEntry,       UNDEFINED, count 32, offset to entry array
+  //   next-IFD offset=0(4)
+  //   -- MP Entry array (2 entries x 16 bytes) --
+  //     image 0 (primary):  attribute=0x80030000 (representative + JPEG
+  //                          Baseline MP Primary Image), size, offset=0
+  //     image 1 (gain map): attribute=0x00000000 (JPEG, undefined type),
+  //                          size, offset (from TIFF header start)
+  const MPF_TIFF_HEADER_LEN = 8;
+  const MPF_IFD0_LEN = 2 + 3 * 12 + 4; // count + 3 entries + next-IFD offset
+  const MPF_ENTRIES_LEN = 2 * 16;
+  const MPF_SEGMENT_TOTAL_LEN = 2 + 2 + 4 + MPF_TIFF_HEADER_LEN + MPF_IFD0_LEN + MPF_ENTRIES_LEN; // marker+len+id+...
+
+  function buildMpfSegment(primarySize, secondarySize, secondaryOffsetFromTiffHeader) {
+    const buf = new ArrayBuffer(MPF_SEGMENT_TOTAL_LEN);
+    const bytes = new Uint8Array(buf);
+    const view = new DataView(buf);
+    let p = 0;
+
+    bytes[p++] = 0xff;
+    bytes[p++] = 0xe2; // APP2
+    view.setUint16(p, MPF_SEGMENT_TOTAL_LEN - 2, false); // length excludes the marker itself
+    p += 2;
+    bytes.set([0x4d, 0x50, 0x46, 0x00], p); // "MPF\0"
+    p += 4;
+
+    // TIFF header
+    bytes.set([0x4d, 0x4d, 0x00, 0x2a], p); // "MM" + magic 42
+    p += 4;
+    view.setUint32(p, MPF_TIFF_HEADER_LEN, false); // offset to IFD0
+    p += 4;
+
+    // IFD0
+    view.setUint16(p, 3, false);
+    p += 2;
+
+    view.setUint16(p, 0xb000, false); p += 2; // MPFVersion
+    view.setUint16(p, 7, false); p += 2; // UNDEFINED
+    view.setUint32(p, 4, false); p += 4;
+    bytes.set([0x30, 0x31, 0x30, 0x30], p); p += 4; // "0100"
+
+    view.setUint16(p, 0xb001, false); p += 2; // NumberOfImages
+    view.setUint16(p, 4, false); p += 2; // LONG
+    view.setUint32(p, 1, false); p += 4;
+    view.setUint32(p, 2, false); p += 4;
+
+    view.setUint16(p, 0xb002, false); p += 2; // MPEntry
+    view.setUint16(p, 7, false); p += 2; // UNDEFINED
+    view.setUint32(p, MPF_ENTRIES_LEN, false); p += 4;
+    view.setUint32(p, MPF_TIFF_HEADER_LEN + MPF_IFD0_LEN, false); p += 4; // offset to entry array
+
+    view.setUint32(p, 0, false); // next IFD offset
+    p += 4;
+
+    // MP Entry array
+    view.setUint32(p, 0x80030000, false); p += 4; // image 0: representative + Baseline MP Primary Image
+    view.setUint32(p, primarySize, false); p += 4;
+    view.setUint32(p, 0, false); p += 4; // offset 0 == this file
+    view.setUint16(p, 0, false); p += 2;
+    view.setUint16(p, 0, false); p += 2;
+
+    view.setUint32(p, 0x00000000, false); p += 4; // image 1: gain map, JPEG, undefined type
+    view.setUint32(p, secondarySize, false); p += 4;
+    view.setUint32(p, secondaryOffsetFromTiffHeader, false); p += 4;
+    view.setUint16(p, 0, false); p += 2;
+    view.setUint16(p, 0, false); p += 2;
+
+    return bytes;
+  }
+
+  // Assembles the final primary-image bytes: original base JPEG with an
+  // MPF APP2 segment and an XMP APP1 segment inserted after SOI/APP0, sized
+  // and offset so the MP Entry for image 1 correctly points at the gain
+  // map JPEG that gets appended immediately after this in the final file.
+  async function assemblePrimaryWithMetadata(baseBlob, xmpString, gainMapByteLength) {
+    const buf = new Uint8Array(await baseBlob.arrayBuffer());
     const insertAt = findInsertionPoint(buf);
-    const out = new Uint8Array(buf.length + app1.length);
-    out.set(buf.subarray(0, insertAt), 0);
-    out.set(app1, insertAt);
-    out.set(buf.subarray(insertAt), insertAt + app1.length);
+    const restLen = buf.length - insertAt;
+    const xmpSeg = buildXmpApp1Segment(xmpString);
+
+    const primarySize = insertAt + MPF_SEGMENT_TOTAL_LEN + xmpSeg.length + restLen;
+    // Bytes remaining after the MPF segment's own TIFF-header start (i.e.
+    // after its marker+length+"MPF\0") that come before the gain map's SOI:
+    // the rest of the MPF segment itself, then the XMP segment, then the
+    // rest of the original base JPEG.
+    const secondaryOffsetFromTiffHeader = (MPF_SEGMENT_TOTAL_LEN - 8) + xmpSeg.length + restLen;
+
+    const mpfSeg = buildMpfSegment(primarySize, gainMapByteLength, secondaryOffsetFromTiffHeader);
+
+    const out = new Uint8Array(primarySize);
+    let p = 0;
+    out.set(buf.subarray(0, insertAt), p); p += insertAt;
+    out.set(mpfSeg, p); p += mpfSeg.length;
+    out.set(xmpSeg, p); p += xmpSeg.length;
+    out.set(buf.subarray(insertAt), p);
     return out;
   }
 
@@ -163,11 +265,11 @@
     ]);
 
     const xmp = buildXmpPacket(maxStops, gainBlob.size);
-    const baseWithXmp = await insertXmpSegment(baseBlob, xmp);
+    const primaryFinal = await assemblePrimaryWithMetadata(baseBlob, xmp, gainBlob.size);
 
-    const out = new Uint8Array(baseWithXmp.length + gainBlob.size);
-    out.set(baseWithXmp, 0);
-    out.set(new Uint8Array(await gainBlob.arrayBuffer()), baseWithXmp.length);
+    const out = new Uint8Array(primaryFinal.length + gainBlob.size);
+    out.set(primaryFinal, 0);
+    out.set(new Uint8Array(await gainBlob.arrayBuffer()), primaryFinal.length);
     return new Blob([out], { type: "image/jpeg" });
   }
 

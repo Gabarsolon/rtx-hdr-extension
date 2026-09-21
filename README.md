@@ -61,7 +61,9 @@ This is **not** a recovery of real HDR data — an 8-bit SDR photo never had any
 - **Local pictures** (`viewer.html`): open a picture, and a **Download HDR (.jpg)** button appears once it's converted.
 - **Images on a page**: in the popup, any row that's shown as converted (`HDR` badge) gets a small **HDR ⇩** button next to it.
 
-The gain-map/container format is an intricate spec (`hdr-export.js` builds the XMP `Container`/`hdrgm` metadata and stitches the two embedded JPEGs together by hand) and this implementation couldn't be tested against a real HDR-capable viewer from here — if a downloaded file doesn't render as HDR in Windows Photos/Chrome for you, that's useful to know.
+The gain-map/container format is an intricate spec (`hdr-export.js` builds the XMP `Container`/`hdrgm` metadata and an MPF binary index by hand, then stitches the two embedded JPEGs together) and this implementation couldn't be tested against a real HDR-capable viewer from here.
+
+**v4.9 → v4.10:** the first version only embedded XMP metadata *describing* a gain map; it opened fine everywhere but never actually rendered as HDR (confirmed via Windows Photos on an HDR display — the correct way to test this). The likely gap: real Ultra HDR files (Pixel/Google's own encoder included) also carry a binary **MPF (Multi-Picture Format) APP2 segment** — a proper TIFF-style byte offset/length index — and viewers apparently rely on that to actually locate the embedded gain map, not just the XMP description of it. v4.10 adds that index. Some of its bit-level details (specifically which bit marks the "representative image" in the MPF attribute field) couldn't be pinned down with full confidence from memory and may not matter for gain-map discovery specifically — if this version still doesn't render as HDR, that's the next thing worth reporting back on.
 
 ## Fullscreen hotkey for any video (Alt+Shift+F)
 
