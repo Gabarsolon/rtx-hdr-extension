@@ -3,6 +3,10 @@
 // loaded through <input type="file"> come in as blob: URLs backed by data
 // the user explicitly picked — they never taint a canvas, so unlike
 // content.js there's no CORS fallback needed here.
+//
+// The single-picture view also offers "Download HDR (.jpg)" — builds a
+// real Ultra HDR gain-map JPEG file via hdr-export.js (loaded before this
+// script). See that file's top comment for what that actually is/isn't.
 
 const hintEl = document.getElementById("hint");
 const singleEl = document.getElementById("single");
@@ -14,8 +18,10 @@ const folderInput = document.getElementById("folderInput");
 const openPictureBtn = document.getElementById("openPicture");
 const openFolderBtn = document.getElementById("openFolder");
 const convertAllBtn = document.getElementById("convertAll");
+const downloadHdrBtn = document.getElementById("downloadHdr");
 
 let lastFolderFiles = []; // powers "back to folder" after viewing a single picture
+let currentSingle = null; // { img, name } for the picture showSingle() currently has open
 
 function isImageFile(file) {
   if (file.type && file.type.startsWith("image/")) return true;
@@ -80,6 +86,9 @@ function showSingle(file) {
   });
   singleMediaEl.innerHTML = "";
 
+  downloadHdrBtn.style.display = "none";
+  currentSingle = null;
+
   const url = URL.createObjectURL(file);
   const probe = new Image();
   probe.onload = () => {
@@ -87,6 +96,10 @@ function showSingle(file) {
     URL.revokeObjectURL(url);
     singleMediaEl.appendChild(video);
     requestVideoFullscreen(video);
+    // probe stays fully usable after revoking its blob URL — once an <img>
+    // has decoded, the bitmap lives with the element, not the URL.
+    currentSingle = { img: probe, name: file.name };
+    downloadHdrBtn.style.display = "inline-block";
   };
   probe.onerror = () => {
     URL.revokeObjectURL(url);
@@ -96,6 +109,22 @@ function showSingle(file) {
   };
   probe.src = url;
 }
+
+downloadHdrBtn.addEventListener("click", async () => {
+  if (!currentSingle || !window.RtxHdrExport) return;
+  downloadHdrBtn.disabled = true;
+  downloadHdrBtn.textContent = "Building HDR file...";
+  try {
+    const { img, name } = currentSingle;
+    const blob = await window.RtxHdrExport.buildUltraHdrJpeg(img, img.naturalWidth, img.naturalHeight);
+    window.RtxHdrExport.downloadBlob(blob, window.RtxHdrExport.hdrFilenameFor(name));
+  } catch (e) {
+    console.warn("RTX HDR Viewer: HDR export failed", e);
+  } finally {
+    downloadHdrBtn.disabled = false;
+    downloadHdrBtn.textContent = "Download HDR (.jpg)";
+  }
+});
 
 // Browsers only grant fullscreen off a user gesture, and the gesture from
 // the original click can, in principle, have expired by the time the image
@@ -178,4 +207,6 @@ backToGrid.addEventListener("click", () => {
   });
   singleEl.style.display = "none";
   gridEl.style.display = "grid";
+  currentSingle = null;
+  downloadHdrBtn.style.display = "none";
 });

@@ -35,6 +35,10 @@
   // they're already real video, nothing to convert. Stream entries also
   // carry "openable": false for live WebRTC (no URL exists at all) vs true
   // for sniffed CDN segment URLs (a real, if possibly time-limited, URL).
+  // Converted image entries additionally carry "exportSource"/"exportW"/
+  // "exportH" — the already-decoded drawable (and its dimensions) used for
+  // the original conversion, kept around so the popup's HDR-download action
+  // can build an Ultra HDR JPEG on demand without refetching anything.
   const registry = new Map();
 
   function setStatus(src, patch) {
@@ -47,6 +51,15 @@
       chrome.runtime.sendMessage({ type: "rtx-hdr-count", count: totalConverted });
     } catch (e) {
       // extension context can go away on navigation; ignore
+    }
+  }
+
+  function filenameFromUrl(src) {
+    try {
+      const parts = new URL(src, location.href).pathname.split("/");
+      return parts[parts.length - 1] || "image";
+    } catch (e) {
+      return "image";
     }
   }
 
@@ -64,7 +77,7 @@
     }
   }
 
-  function swap(img, canvas, stream, src) {
+  function swap(img, canvas, stream, src, exportSource) {
     const video = document.createElement("video");
     video.srcObject = stream;
     video.autoplay = true;
@@ -78,7 +91,12 @@
     img.replaceWith(video);
     video.play().catch(() => {});
     totalConverted++;
-    setStatus(src, { status: "converted" });
+    // exportSource stays perfectly drawable even after img is removed from
+    // the DOM above — a decoded <img>'s bitmap lives with the element, not
+    // its DOM connection — so it's kept around for on-demand HDR file
+    // export from the popup (see rtx-hdr-download-image below), without
+    // needing to refetch/redecode anything.
+    setStatus(src, { status: "converted", exportSource, exportW: img.naturalWidth, exportH: img.naturalHeight });
     reportCount();
     return video;
   }
@@ -199,7 +217,7 @@
 
     try {
       const stream = drawAndCapture(canvas, ctx, img, w, h);
-      const video = swap(img, canvas, stream, src);
+      const video = swap(img, canvas, stream, src, img);
       if (animated) animate(src, img, canvas, ctx, w, h, video);
       return;
     } catch (e) {
@@ -228,7 +246,7 @@
         const retryCtx = retryCanvas.getContext("2d");
         try {
           const stream = drawAndCapture(retryCanvas, retryCtx, fresh, w, h);
-          const video = swap(img, retryCanvas, stream, src);
+          const video = swap(img, retryCanvas, stream, src, fresh);
           // resp.dataUrl is already the raw bytes as a data: URL — reuse it
           // directly instead of re-fetching src (which would just fail with
           // the same CORS error all over again).
@@ -426,6 +444,24 @@
     if (msg.type === "rtx-hdr-get-images") {
       sendResponse({ items: Array.from(registry.values()), isImagePage, autoConvertAll });
       return;
+    }
+
+    if (msg.type === "rtx-hdr-download-image") {
+      const entry = registry.get(msg.src);
+      if (!entry || entry.kind !== "image" || !entry.exportSource || !window.RtxHdrExport) {
+        sendResponse({ ok: false, error: "not available (convert it first)" });
+        return;
+      }
+      window.RtxHdrExport.buildUltraHdrJpeg(entry.exportSource, entry.exportW, entry.exportH)
+        .then((blob) => {
+          window.RtxHdrExport.downloadBlob(blob, window.RtxHdrExport.hdrFilenameFor(filenameFromUrl(msg.src)));
+          sendResponse({ ok: true });
+        })
+        .catch((err) => {
+          console.warn("RTX HDR Booster: HDR export failed", err);
+          sendResponse({ ok: false, error: String(err) });
+        });
+      return true; // keep the message channel open for the async response
     }
   });
 

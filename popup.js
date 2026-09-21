@@ -90,6 +90,29 @@ function render(items, isImagePage, autoConvertAll) {
       badge.textContent = text;
       if (item.reason) badge.title = item.reason;
       li.appendChild(badge);
+
+      if (item.status === "converted") {
+        const dlBtn = document.createElement("button");
+        dlBtn.className = "downloadHdrBtn";
+        dlBtn.textContent = "HDR ⇩";
+        dlBtn.title = "Download as a real Ultra HDR (.jpg) file";
+        dlBtn.addEventListener("click", (e) => {
+          e.stopPropagation();
+          if (activeTabId == null) return;
+          dlBtn.disabled = true;
+          const original = dlBtn.textContent;
+          dlBtn.textContent = "...";
+          chrome.tabs.sendMessage(activeTabId, { type: "rtx-hdr-download-image", src: item.src }, (resp) => {
+            void chrome.runtime.lastError;
+            dlBtn.disabled = false;
+            dlBtn.textContent = original;
+            if (!resp || !resp.ok) {
+              console.warn("RTX HDR Booster: HDR download failed", resp && resp.error);
+            }
+          });
+        });
+        li.appendChild(dlBtn);
+      }
     }
 
     if (item.openable === false) {

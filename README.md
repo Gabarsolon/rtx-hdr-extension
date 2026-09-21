@@ -52,6 +52,17 @@ The fix decodes the GIF's actual frames itself, using the browser's [`ImageDecod
 
 One theory (RTX needs a settle window after playback starts before it'll engage, and a GIF changing content from frame 1 interrupts that) was tested with a deliberate 1.5s hold-on-first-frame delay before animation starts — it didn't help, HDR still never engaged once motion started, so that delay was removed again. At this point this looks like the same kind of driver-level black box as the [Instagram case above](#open-question-does-rtx-video-hdr-actually-engage-on-these): there's no API surface, log, or signal available to a browser extension for what RTX Video HDR's engagement heuristic is actually keying off, so further fixes here would just be more blind guessing. GIFs do now convert and actually play (the original ask), just apparently without HDR — same open question as everything else in this doc about whether `canvas.captureStream()` video was ever going through the real hardware decode surface RTX watches, versus the ordinary compositor path.
 
+## Downloading an actual HDR file
+
+The live canvas-stream video this extension creates only exists on screen — its pixels are never touched by RTX Video HDR (see the "Open question" section below for why), so there's nothing meaningful to "save" straight off it. What you *can* save is a real, standalone HDR still image: a **gain-map JPEG** (also called Ultra HDR — the format Google/Adobe defined, and the one Chrome, Android, and Windows Photos actually recognize and render as HDR). It's a normal baseline JPEG — opens fine anywhere — with a second, embedded grayscale JPEG describing how much brighter to push each pixel on an HDR display, plus XMP metadata describing that mapping.
+
+This is **not** a recovery of real HDR data — an 8-bit SDR photo never had any extra dynamic range captured in the first place, and there's no way to get RTX Video HDR's own runtime output out of the browser at all. What it does instead is synthesize a plausible boost (bright highlights pushed brighter, midtones/shadows left alone) and package it as a file real HDR viewers will render as HDR — the same basic idea as any "AI HDR enhance" filter, just as a downloadable file instead of a one-off effect.
+
+- **Local pictures** (`viewer.html`): open a picture, and a **Download HDR (.jpg)** button appears once it's converted.
+- **Images on a page**: in the popup, any row that's shown as converted (`HDR` badge) gets a small **HDR ⇩** button next to it.
+
+The gain-map/container format is an intricate spec (`hdr-export.js` builds the XMP `Container`/`hdrgm` metadata and stitches the two embedded JPEGs together by hand) and this implementation couldn't be tested against a real HDR-capable viewer from here — if a downloaded file doesn't render as HDR in Windows Photos/Chrome for you, that's useful to know.
+
 ## Fullscreen hotkey for any video (Alt+Shift+F)
 
 Press **Alt+Shift+F** to `requestFullscreen()` a video directly, in place. No popup, no new tab, nothing else on the page touched. (Not plain Alt+F — that's Chrome's own shortcut for its 3-dot menu, and the browser eats it before a page ever sees the keydown.)
