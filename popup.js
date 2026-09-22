@@ -2,6 +2,7 @@ const listEl = document.getElementById("list");
 const emptyEl = document.getElementById("empty");
 const countEl = document.getElementById("count");
 const rescanBtn = document.getElementById("rescan");
+const revertAllBtn = document.getElementById("revertAll");
 const hintEl = document.getElementById("hint");
 const autoToggle = document.getElementById("autoToggle");
 const openLocalBtn = document.getElementById("openLocal");
@@ -23,6 +24,42 @@ function filenameOf(src) {
   } catch (e) {
     return src;
   }
+}
+
+// Builds a small per-row action button that sends `msgType` (with the
+// item's src) to the content script and reloads the list once it responds
+// — used for the HDR-download, revert, and convert-now row actions.
+function makeRowActionBtn(label, title, msgType, src, extraClass) {
+  const btn = document.createElement("button");
+  btn.className = extraClass ? `rowActionBtn ${extraClass}` : "rowActionBtn";
+  btn.textContent = label;
+  btn.title = title;
+  btn.addEventListener("click", (e) => {
+    e.stopPropagation();
+    if (activeTabId == null) return;
+    btn.disabled = true;
+    const original = btn.textContent;
+    btn.textContent = "...";
+    chrome.tabs.sendMessage(activeTabId, { type: msgType, src }, (resp) => {
+      void chrome.runtime.lastError;
+      if (!resp || !resp.ok) {
+        console.warn(`RTX HDR Booster: ${msgType} failed`, resp && resp.error);
+        btn.disabled = false;
+        btn.textContent = original;
+        return;
+      }
+      // Revert/convert change the item's status — refresh the list so the
+      // row reflects it. The download action doesn't change anything, so
+      // just restore this button in place.
+      if (msgType === "rtx-hdr-download-image") {
+        btn.disabled = false;
+        btn.textContent = original;
+      } else {
+        loadImages();
+      }
+    });
+  });
+  return btn;
 }
 
 function render(items, isImagePage, autoConvertAll) {
@@ -92,26 +129,10 @@ function render(items, isImagePage, autoConvertAll) {
       li.appendChild(badge);
 
       if (item.status === "converted") {
-        const dlBtn = document.createElement("button");
-        dlBtn.className = "downloadHdrBtn";
-        dlBtn.textContent = "HDR ⇩";
-        dlBtn.title = "Download as a real Ultra HDR (.jpg) file";
-        dlBtn.addEventListener("click", (e) => {
-          e.stopPropagation();
-          if (activeTabId == null) return;
-          dlBtn.disabled = true;
-          const original = dlBtn.textContent;
-          dlBtn.textContent = "...";
-          chrome.tabs.sendMessage(activeTabId, { type: "rtx-hdr-download-image", src: item.src }, (resp) => {
-            void chrome.runtime.lastError;
-            dlBtn.disabled = false;
-            dlBtn.textContent = original;
-            if (!resp || !resp.ok) {
-              console.warn("RTX HDR Booster: HDR download failed", resp && resp.error);
-            }
-          });
-        });
-        li.appendChild(dlBtn);
+        li.appendChild(makeRowActionBtn("HDR ⇩", "Download as a real Ultra HDR (.jpg) file", "rtx-hdr-download-image", item.src));
+        li.appendChild(makeRowActionBtn("↺ Revert", "Switch this back to a plain image", "rtx-hdr-revert-image", item.src));
+      } else if (item.status === "detected") {
+        li.appendChild(makeRowActionBtn("▶ Convert", "Convert this image now", "rtx-hdr-reconvert-image", item.src, "convert"));
       }
     }
 
@@ -171,5 +192,13 @@ rescanBtn.addEventListener("click", () => {
   chrome.tabs.sendMessage(activeTabId, { type: "rtx-hdr-rescan" }, () => {
     void chrome.runtime.lastError; // ignore if content script isn't present
     setTimeout(loadImages, 600);
+  });
+});
+
+revertAllBtn.addEventListener("click", () => {
+  if (activeTabId == null) return;
+  chrome.tabs.sendMessage(activeTabId, { type: "rtx-hdr-revert-all" }, (resp) => {
+    void chrome.runtime.lastError;
+    loadImages();
   });
 });

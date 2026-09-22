@@ -19,9 +19,10 @@ const openPictureBtn = document.getElementById("openPicture");
 const openFolderBtn = document.getElementById("openFolder");
 const convertAllBtn = document.getElementById("convertAll");
 const downloadHdrBtn = document.getElementById("downloadHdr");
+const toggleOriginalBtn = document.getElementById("toggleOriginal");
 
 let lastFolderFiles = []; // powers "back to folder" after viewing a single picture
-let currentSingle = null; // { img, name } for the picture showSingle() currently has open
+let currentSingle = null; // { img, name, video, showingVideo } for the picture showSingle() currently has open
 
 function isImageFile(file) {
   if (file.type && file.type.startsWith("image/")) return true;
@@ -87,6 +88,7 @@ function showSingle(file) {
   singleMediaEl.innerHTML = "";
 
   downloadHdrBtn.style.display = "none";
+  toggleOriginalBtn.style.display = "none";
   currentSingle = null;
 
   const url = URL.createObjectURL(file);
@@ -98,8 +100,10 @@ function showSingle(file) {
     requestVideoFullscreen(video);
     // probe stays fully usable after revoking its blob URL — once an <img>
     // has decoded, the bitmap lives with the element, not the URL.
-    currentSingle = { img: probe, name: file.name };
+    currentSingle = { img: probe, name: file.name, video, showingVideo: true };
     downloadHdrBtn.style.display = "inline-block";
+    toggleOriginalBtn.style.display = "inline-block";
+    toggleOriginalBtn.textContent = "Show Original Image";
   };
   probe.onerror = () => {
     URL.revokeObjectURL(url);
@@ -109,6 +113,26 @@ function showSingle(file) {
   };
   probe.src = url;
 }
+
+toggleOriginalBtn.addEventListener("click", () => {
+  if (!currentSingle) return;
+  if (currentSingle.showingVideo) {
+    // Switch to the plain image: stop the stream and swap it back in.
+    if (currentSingle.video.srcObject) {
+      currentSingle.video.srcObject.getTracks().forEach((t) => t.stop());
+    }
+    currentSingle.video.replaceWith(currentSingle.img);
+    currentSingle.showingVideo = false;
+    toggleOriginalBtn.textContent = "Convert to HDR Video";
+  } else {
+    // Re-convert: build a fresh video from the same already-loaded image.
+    const video = convertToVideo(currentSingle.img);
+    currentSingle.img.replaceWith(video);
+    currentSingle.video = video;
+    currentSingle.showingVideo = true;
+    toggleOriginalBtn.textContent = "Show Original Image";
+  }
+});
 
 downloadHdrBtn.addEventListener("click", async () => {
   if (!currentSingle || !window.RtxHdrExport) return;
@@ -209,4 +233,5 @@ backToGrid.addEventListener("click", () => {
   gridEl.style.display = "grid";
   currentSingle = null;
   downloadHdrBtn.style.display = "none";
+  toggleOriginalBtn.style.display = "none";
 });

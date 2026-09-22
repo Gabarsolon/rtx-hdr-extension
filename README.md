@@ -52,6 +52,15 @@ The fix decodes the GIF's actual frames itself, using the browser's [`ImageDecod
 
 One theory (RTX needs a settle window after playback starts before it'll engage, and a GIF changing content from frame 1 interrupts that) was tested with a deliberate 1.5s hold-on-first-frame delay before animation starts — it didn't help, HDR still never engaged once motion started, so that delay was removed again. At this point this looks like the same kind of driver-level black box as the [Instagram case above](#open-question-does-rtx-video-hdr-actually-engage-on-these): there's no API surface, log, or signal available to a browser extension for what RTX Video HDR's engagement heuristic is actually keying off, so further fixes here would just be more blind guessing. GIFs do now convert and actually play (the original ask), just apparently without HDR — same open question as everything else in this doc about whether `canvas.captureStream()` video was ever going through the real hardware decode surface RTX watches, versus the ordinary compositor path.
 
+## Converting back to a plain image
+
+Every converted image can be switched back — nothing is one-way:
+
+- **In the popup**: converted rows get a **↺ Revert** button; rows that are just detected (not converted) get a **▶ Convert** button to convert that one image on demand, regardless of the auto-convert toggle. A **Revert All** button in the header reverts every converted image on the current page at once.
+- **In the local viewer**: the single-picture view has a **Show Original Image** / **Convert to HDR Video** toggle button.
+
+Reverting doesn't just discard the conversion — the original `<img>` is put right back where the video was, and stays that way even if "Auto-convert on every page" is on (a manual revert is remembered per-image until you explicitly convert it again; it won't silently get re-converted on the next scan).
+
 ## Downloading an actual HDR file
 
 The live canvas-stream video this extension creates only exists on screen — its pixels are never touched by RTX Video HDR (see the "Open question" section below for why), so there's nothing meaningful to "save" straight off it. What you *can* save is a real, standalone HDR still image: a **gain-map JPEG** (also called Ultra HDR — the format Google/Adobe defined, and the one Chrome, Android, and Windows Photos actually recognize and render as HDR). It's a normal baseline JPEG — opens fine anywhere — with a second, embedded grayscale JPEG describing how much brighter to push each pixel on an HDR display, plus XMP metadata describing that mapping.

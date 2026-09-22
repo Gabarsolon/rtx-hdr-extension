@@ -38,7 +38,9 @@
   // Converted image entries additionally carry "exportSource"/"exportW"/
   // "exportH" — the already-decoded drawable (and its dimensions) used for
   // the original conversion, kept around so the popup's HDR-download action
-  // can build an Ultra HDR JPEG on demand without refetching anything.
+  // can build an Ultra HDR JPEG on demand without refetching anything — and
+  // "videoEl", the live <video> currently showing in its place, used by the
+  // popup's Revert action to swap the original image back in.
   const registry = new Map();
 
   function setStatus(src, patch) {
@@ -96,9 +98,81 @@
     // its DOM connection — so it's kept around for on-demand HDR file
     // export from the popup (see rtx-hdr-download-image below), without
     // needing to refetch/redecode anything.
-    setStatus(src, { status: "converted", exportSource, exportW: img.naturalWidth, exportH: img.naturalHeight });
+    setStatus(src, {
+      status: "converted",
+      exportSource,
+      exportW: img.naturalWidth,
+      exportH: img.naturalHeight,
+      videoEl: video,
+    });
     reportCount();
     return video;
+  }
+
+  function findImgBySrc(src) {
+    for (const img of document.querySelectorAll("img")) {
+      if (img.src === src) return img;
+    }
+    return null;
+  }
+
+  // Swaps a converted video back to showing the plain image, undoing
+  // doConversion(). Reuses the same drawable that was used for the
+  // original conversion (exportSource) rather than creating a new <img> —
+  // it's already fully loaded, so this is instant either way.
+  function revertImage(src) {
+    const entry = registry.get(src);
+    if (!entry || entry.kind !== "image" || entry.status !== "converted" || !entry.videoEl || !entry.exportSource) {
+      return false;
+    }
+    const { videoEl, exportSource } = entry;
+    if (!videoEl.isConnected) return false;
+
+    if (videoEl.srcObject) {
+      videoEl.srcObject.getTracks().forEach((t) => t.stop());
+    }
+    // Undo any hiding the GIF legacy-redraw fallback may have applied, and
+    // carry over whatever sizing/positioning the video ended up with so the
+    // page layout doesn't jump.
+    exportSource.style.cssText = videoEl.style.cssText;
+    exportSource.style.position = "";
+    exportSource.style.opacity = "";
+    exportSource.style.pointerEvents = "";
+    exportSource.removeAttribute("aria-hidden");
+    exportSource.className = videoEl.className;
+    videoEl.replaceWith(exportSource);
+
+    delete exportSource.dataset.rtxHdrDone;
+    // Marks this image as manually reverted so a later automatic rescan
+    // (autoConvertAll, or the MutationObserver noticing the img come back)
+    // doesn't immediately reconvert it right back — only an explicit
+    // reconvert action should undo a revert.
+    exportSource.dataset.rtxHdrReverted = "1";
+
+    totalConverted = Math.max(0, totalConverted - 1);
+    setStatus(src, { status: "detected", videoEl: null });
+    reportCount();
+    return true;
+  }
+
+  // Converts (or re-converts, after a revert) a single image on demand,
+  // regardless of the isImagePage/autoConvertAll gating attemptConvert()
+  // normally applies — an explicit user action always wins.
+  function reconvertImage(src) {
+    const entry = registry.get(src);
+    const img = (entry && entry.exportSource && entry.exportSource.isConnected && entry.exportSource) || findImgBySrc(src);
+    if (!img) return false;
+    delete img.dataset.rtxHdrReverted;
+    delete img.dataset.rtxHdrDone;
+    img.dataset.rtxHdrDone = "1";
+    setStatus(src, {
+      kind: "image",
+      width: img.naturalWidth,
+      height: img.naturalHeight,
+      status: "pending",
+    });
+    doConversion(img);
+    return true;
   }
 
   // Draws sourceImg into canvas and captures it. captureStream() throws
@@ -265,7 +339,7 @@
   }
 
   function attemptConvert(img) {
-    if (!img.src || img.dataset.rtxHdrDone) return;
+    if (!img.src || img.dataset.rtxHdrDone || img.dataset.rtxHdrReverted) return;
 
     if (!img.complete || img.naturalWidth === 0) {
       img.addEventListener("load", () => attemptConvert(img), { once: true });
@@ -462,6 +536,27 @@
           sendResponse({ ok: false, error: String(err) });
         });
       return true; // keep the message channel open for the async response
+    }
+
+    if (msg.type === "rtx-hdr-revert-image") {
+      sendResponse({ ok: revertImage(msg.src) });
+      return;
+    }
+
+    if (msg.type === "rtx-hdr-reconvert-image") {
+      sendResponse({ ok: reconvertImage(msg.src) });
+      return;
+    }
+
+    if (msg.type === "rtx-hdr-revert-all") {
+      let count = 0;
+      // Snapshot first — revertImage() mutates the registry map we'd
+      // otherwise be iterating live.
+      for (const entry of Array.from(registry.values())) {
+        if (entry.kind === "image" && entry.status === "converted" && revertImage(entry.src)) count++;
+      }
+      sendResponse({ ok: true, count });
+      return;
     }
   });
 

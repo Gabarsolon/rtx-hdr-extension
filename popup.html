@@ -31,6 +31,7 @@
     color: #a9e34b;
   }
   header .count { color: #8b8f98; font-size: 12px; }
+  header .actions { display: flex; gap: 6px; }
   .toggle-row {
     display: flex;
     align-items: center;
@@ -78,7 +79,7 @@
   }
   .switch input:checked + .slider { background: #4d7c1f; }
   .switch input:checked + .slider::before { transform: translateX(14px); background: #a9e34b; }
-  button#rescan, button#openLocal {
+  button#rescan, button#openLocal, button#revertAll {
     background: #2a2d34;
     color: #e6e6e6;
     border: 1px solid #3a3d44;
@@ -87,8 +88,8 @@
     font-size: 12px;
     cursor: pointer;
   }
-  button#rescan:hover, button#openLocal:hover { background: #34373f; }
-  button#rescan:active, button#openLocal:active { transform: translateY(1px); }
+  button#rescan:hover, button#openLocal:hover, button#revertAll:hover { background: #34373f; }
+  button#rescan:active, button#openLocal:active, button#revertAll:active { transform: translateY(1px); }
   ul#list {
     list-style: none;
     margin: 0;
@@ -155,7 +156,7 @@
   .tag.stream { color: #e0b96b; border-color: #4a3a1f; }
   li.not-openable { cursor: default; opacity: 0.75; }
   li.not-openable:hover { background: transparent; }
-  .downloadHdrBtn {
+  .rowActionBtn {
     flex-shrink: 0;
     background: #23262d;
     color: #cfd2d8;
@@ -165,8 +166,9 @@
     padding: 3px 6px;
     cursor: pointer;
   }
-  .downloadHdrBtn:hover { background: #2d3038; color: #e6e6e6; }
-  .downloadHdrBtn:disabled { opacity: 0.5; cursor: default; }
+  .rowActionBtn:hover { background: #2d3038; color: #e6e6e6; }
+  .rowActionBtn:disabled { opacity: 0.5; cursor: default; }
+  .rowActionBtn.convert { color: #a9e34b; border-color: #3a4a2a; }
   #empty {
     padding: 24px 12px;
     text-align: center;
@@ -185,7 +187,10 @@
 <body>
   <header>
     <h1>RTX HDR Image Booster</h1>
-    <button id="rescan">Rescan</button>
+    <div class="actions">
+      <button id="revertAll">Revert All</button>
+      <button id="rescan">Rescan</button>
+    </div>
   </header>
   <div class="toggle-row">
     <label for="autoToggle">Auto-convert on every page</label>
