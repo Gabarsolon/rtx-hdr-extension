@@ -5,6 +5,7 @@ const rescanBtn = document.getElementById("rescan");
 const revertAllBtn = document.getElementById("revertAll");
 const hintEl = document.getElementById("hint");
 const autoToggle = document.getElementById("autoToggle");
+const unblockToggle = document.getElementById("unblockToggle");
 const openLocalBtn = document.getElementById("openLocal");
 
 let activeTabId = null;
@@ -170,8 +171,17 @@ chrome.tabs.query({ active: true, currentWindow: true }, ([tab]) => {
   loadImages();
 });
 
-chrome.storage.local.get({ autoConvertAll: true }, (result) => {
+chrome.storage.local.get({ autoConvertAll: true, unblockVideos: true }, (result) => {
   autoToggle.checked = !!result.autoConvertAll;
+  unblockToggle.checked = result.unblockVideos !== false;
+});
+
+unblockToggle.addEventListener("change", () => {
+  chrome.storage.local.set({ unblockVideos: unblockToggle.checked }, () => {
+    if (chrome.runtime.lastError) {
+      console.warn("RTX HDR Booster: failed to save toggle", chrome.runtime.lastError);
+    }
+  });
 });
 
 autoToggle.addEventListener("change", () => {

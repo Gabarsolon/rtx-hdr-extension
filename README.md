@@ -5,6 +5,7 @@ Two modes, depending on the tab — plus a popup toggle to collapse them into on
 - **Regular page** (embeds `<img>` tags among other content): images are only *detected* and listed in the popup — nothing is converted by default. Click a row to open that image directly in a new tab.
 - **Direct image tab** (you navigated straight to an image URL, or opened one via right-click → "Open image in new tab" — Chrome renders its built-in single-image viewer, `document.contentType` starts with `image/`): the image gets swapped for a `<video>` element backed by a live `canvas.captureStream()` of it. Since it's a real `<video>`, RTX Video HDR (which only watches for video elements) picks it up and tone-maps it.
 - **"Auto-convert on every page" toggle** in the popup: **on by default** — converts on sight everywhere, same as direct image tabs. Flip it off if you want the click-to-open-then-convert flow instead. Persisted via `chrome.storage.local` and applies live to already-open tabs without a reload.
+- **"Unblock RTX HDR on site videos" toggle** in the popup: **on by default** — undoes the invisible 99%-opacity trick some sites use that stops RTX Video HDR from engaging on their own videos (see [below](#unblocking-rtx-hdr-on-sites-own-videos)).
 
 ## Install (unpacked, since it's not on the Chrome Web Store)
 
@@ -74,9 +75,24 @@ The gain-map/container format is an intricate spec (`hdr-export.js` builds the X
 
 **v4.9 → v4.10:** the first version only embedded XMP metadata *describing* a gain map; it opened fine everywhere but never actually rendered as HDR (confirmed via Windows Photos on an HDR display — the correct way to test this). The likely gap: real Ultra HDR files (Pixel/Google's own encoder included) also carry a binary **MPF (Multi-Picture Format) APP2 segment** — a proper TIFF-style byte offset/length index — and viewers apparently rely on that to actually locate the embedded gain map, not just the XMP description of it. v4.10 adds that index. Some of its bit-level details (specifically which bit marks the "representative image" in the MPF attribute field) couldn't be pinned down with full confidence from memory and may not matter for gain-map discovery specifically — if this version still doesn't render as HDR, that's the next thing worth reporting back on.
 
+## Unblocking RTX HDR on sites' own videos
+
+RTX Video HDR never looks at the page itself. Chrome only passes a video's frames through the NVIDIA driver when it gives that video its own hardware layer (a DirectComposition overlay) instead of drawing it as part of the page. Anything that makes Chrome draw the video as ordinary page content means RTX never sees it, no matter how "real" the video is or whether it's hardware-decoded.
+
+One cause, confirmed on a real site's player: the site set `opacity: 0.99` on its `<video>`. That's invisible to the eye, but Chrome won't give a video that isn't fully opaque its own layer. Forcing it back to 1 made RTX HDR engage.
+
+The **"Unblock RTX HDR on site videos"** toggle in the popup (**on by default**) does that automatically. While a video plays, the video and any container around it with an opacity between 0.9 and 1 are forced fully opaque, with no visible difference. Lower opacities are left alone, since those are real fades or deliberately hidden videos. The override comes off when the video pauses or ends, so a site's own fades still work. Each fix is logged to the page's console (`RTX HDR Booster: forced opacity ...`).
+
+Other things that keep a video off its own layer, which the toggle doesn't touch: `filter`, `clip-path`/`mask`, or a rotate/3D transform on the video or its containers; a blurred (`backdrop-filter`) or blend-mode element on top of it; and another video playing on screen at the same time. Alt+Shift+F (below) gets around all of these.
+
 ## Fullscreen hotkey for any video (Alt+Shift+F)
 
-Press **Alt+Shift+F** to `requestFullscreen()` a video directly, in place. No popup, no new tab, nothing else on the page touched. (Not plain Alt+F — that's Chrome's own shortcut for its 3-dot menu, and the browser eats it before a page ever sees the keydown.)
+Press **Alt+Shift+F** to fullscreen a video directly, in place. It fullscreens the bare `<video>` element rather than the site's player wrapper, so nothing the page draws over or around the video applies anymore. On the way in it also:
+
+- forces the video fully opaque if the site made it 99% opaque (even with the toggle above turned off)
+- pauses and hides any other video playing visibly on the page, and puts them back the way they were when you exit fullscreen
+
+(Not plain Alt+F — that's Chrome's own shortcut for its 3-dot menu, and the browser eats it before a page ever sees the keydown.)
 
 It uses whichever video you're hovering if that resolves cleanly, but falls back to "whichever playing video is most visible in the viewport" when it doesn't — plenty of sites (Instagram very much included) layer their own UI controls (likes, captions, mute button) directly on top of the `<video>` at a higher z-index, so the mouse ends up hovering that overlay, not the video underneath, and hover-tracking alone would silently do nothing.
 
@@ -84,7 +100,7 @@ It uses whichever video you're hovering if that resolves cleanly, but falls back
 
 If it doesn't fire at all on some site (no console warning, nothing): the listener is registered on `window` in the capture phase specifically so it runs before any page-level handler could see or swallow the keydown first — sites with their own custom player (Mega.nz among them) often have a global shortcut handler for space/arrows/"f" that can eat a broad range of keydowns, sometimes checking only the key and not the modifiers.
 
-This exists because RTX Video HDR and RTX Video Super Resolution are driver/GPU-level features with **no web API** — there's no JS or DOM hook an extension (or the page itself) can call to turn them on for a specific video. Whether they engage is entirely up to NVIDIA's own heuristics, but there are real reports that on-screen video size matters, with fullscreen being the reliable case. Alt+F just makes that cheap to test; it doesn't guarantee anything actually engages. Other known requirements worth checking independently of this extension: Windows must be in HDR mode, hardware-accelerated video decode must be on in Chrome (`chrome://settings/system`), and the effect must be enabled for Chrome in the NVIDIA app.
+This exists because RTX Video HDR and RTX Video Super Resolution are driver/GPU-level features with **no web API** — there's no JS or DOM hook an extension (or the page itself) can call to turn them on for a specific video. What an extension *can* do is get the video into the state Chrome needs before it hands the video to the driver (its own overlay layer, see above), and fullscreening the bare video is the cleanest version of that. It still doesn't guarantee anything engages. Other known requirements worth checking independently of this extension: Windows must be in HDR mode on the monitor the video is on, hardware acceleration must be on in Chrome (`chrome://settings/system`), and the effect must be enabled for Chrome in the NVIDIA app. The NVIDIA app's RTX Video status is the reliable way to tell whether it actually engaged.
 
 ## Open question: does RTX Video HDR actually engage on these?
 

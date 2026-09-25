@@ -560,33 +560,140 @@
     }
   });
 
-  // Load the toggle's persisted value, then do the initial scan. Using
+  // Unblocking RTX Video HDR on sites' own videos. Chrome only passes a
+  // video's frames through the NVIDIA driver when it promotes that video to
+  // its own DirectComposition overlay layer, and it won't promote a video
+  // that's even slightly transparent. Some sites set opacity: 0.99 on the
+  // <video> (or a container around it) — invisible to the eye, but enough to
+  // keep it off the overlay path, so RTX never sees it. Confirmed on a real
+  // site's player: forcing it back to 1 is what made RTX HDR engage.
+  //
+  // While a video plays, anything in its ancestor chain with opacity in
+  // [0.9, 1) gets forced fully opaque through a stylesheet !important rule,
+  // which beats the site's own rules and any non-important inline style its
+  // JS re-applies later. Lower opacities are left alone — those are real
+  // fades or deliberately hidden videos. Re-checked every second while
+  // anything plays, since sites often apply the tweak after playback starts
+  // (e.g. a class change when the controls auto-hide). Marks come off when
+  // the video pauses or ends, so a site's own end-of-video fades still work,
+  // and go back on if it plays again.
+  const OPAQUE_ATTR = "data-rtx-hdr-opaque";
+  let unblockVideos = true; // popup toggle, persisted in chrome.storage.local
+  let unblockTimer = null;
+  let opaqueMarks = new WeakMap(); // video -> elements marked on its behalf
+
+  function ensureOpaqueStyle() {
+    if (document.getElementById("rtx-hdr-opaque-style")) return;
+    const st = document.createElement("style");
+    st.id = "rtx-hdr-opaque-style";
+    st.textContent = `[${OPAQUE_ATTR}] { opacity: 1 !important; }`;
+    (document.head || document.documentElement).appendChild(st);
+  }
+
+  function unblockVideo(v) {
+    for (let el = v; el && el !== document.documentElement; el = el.parentElement) {
+      if (el.hasAttribute(OPAQUE_ATTR)) continue;
+      const o = parseFloat(getComputedStyle(el).opacity);
+      if (o < 0.9 || o >= 1) continue;
+      ensureOpaqueStyle();
+      el.setAttribute(OPAQUE_ATTR, "");
+      if (!opaqueMarks.has(v)) opaqueMarks.set(v, []);
+      opaqueMarks.get(v).push(el);
+      console.info(`RTX HDR Booster: forced opacity ${o} -> 1 so Chrome can hand this video to RTX`, el);
+    }
+  }
+
+  // Returns whether anything is playing, so the timer knows when to stop.
+  function unblockPlayingVideos() {
+    let anyPlaying = false;
+    for (const v of document.querySelectorAll("video")) {
+      if (v.paused || v.ended) continue;
+      anyPlaying = true;
+      unblockVideo(v);
+    }
+    return anyPlaying;
+  }
+
+  function stopUnblocking() {
+    if (unblockTimer) {
+      clearInterval(unblockTimer);
+      unblockTimer = null;
+    }
+  }
+
+  function startUnblocking() {
+    if (!unblockVideos || !unblockPlayingVideos() || unblockTimer) return;
+    unblockTimer = setInterval(() => {
+      if (!unblockVideos || !unblockPlayingVideos()) stopUnblocking();
+    }, 1000);
+  }
+
+  function clearMarksFor(v) {
+    const els = opaqueMarks.get(v);
+    if (!els) return;
+    for (const el of els) el.removeAttribute(OPAQUE_ATTR);
+    opaqueMarks.delete(v);
+  }
+
+  function clearAllMarks() {
+    for (const el of document.querySelectorAll(`[${OPAQUE_ATTR}]`)) el.removeAttribute(OPAQUE_ATTR);
+    opaqueMarks = new WeakMap();
+  }
+
+  // Media events don't bubble, but capture-phase listeners on document
+  // still see them for every <video> in this frame.
+  document.addEventListener("playing", () => startUnblocking(), true);
+  for (const type of ["pause", "ended", "emptied"]) {
+    document.addEventListener(
+      type,
+      (e) => {
+        if (e.target instanceof HTMLVideoElement) clearMarksFor(e.target);
+      },
+      true
+    );
+  }
+
+  // Load the toggles' persisted values, then do the initial scan. Using
   // storage.local (not .sync) — sync depends on being signed into Chrome
   // sync and can lag or silently no-op if that's off; local is instant and
-  // has no such dependency. Defaults to true: auto-convert everywhere.
-  chrome.storage.local.get({ autoConvertAll: true }, (result) => {
+  // has no such dependency. Both default to on.
+  chrome.storage.local.get({ autoConvertAll: true, unblockVideos: true }, (result) => {
     autoConvertAll = !!result.autoConvertAll;
+    unblockVideos = result.unblockVideos !== false;
     scan();
+    startUnblocking(); // videos that started playing before this script attached
   });
 
-  // Live-apply the toggle without needing a page reload. Turning it on
-  // re-scans so already-seen-but-skipped ("detected") images get converted.
+  // Live-apply the toggles without needing a page reload. Turning
+  // auto-convert on re-scans so already-seen-but-skipped ("detected")
+  // images get converted.
   chrome.storage.onChanged.addListener((changes, area) => {
-    if (area !== "local" || !changes.autoConvertAll) return;
-    autoConvertAll = !!changes.autoConvertAll.newValue;
-    if (autoConvertAll) scan();
+    if (area !== "local") return;
+    if (changes.autoConvertAll) {
+      autoConvertAll = !!changes.autoConvertAll.newValue;
+      if (autoConvertAll) scan();
+    }
+    if (changes.unblockVideos) {
+      unblockVideos = changes.unblockVideos.newValue !== false;
+      if (unblockVideos) {
+        startUnblocking();
+      } else {
+        stopUnblocking();
+        clearAllMarks();
+      }
+    }
   });
 
   // Fullscreen hotkey for any <video> on the page — native ones (Instagram,
-  // etc.) included, not just ones this extension touched. RTX Video HDR/
-  // Super Resolution are driver-level features with no web API to invoke;
-  // there's nothing this extension can call to turn them on for a given
-  // video. But there are real reports they only engage once a video is
-  // displayed large enough, fullscreen being the reliable case — this just
-  // makes that cheap to test directly, in place, no popup/tab involved.
-  // Uses capture-phase listeners so it works even inside a site's own
-  // player controls, and never touches the page's DOM (no risk of
-  // disturbing a site's own player/React state).
+  // etc.) included, not just ones this extension touched. It fullscreens
+  // the bare <video> element rather than the site's player wrapper, so
+  // nothing the page draws over or around the video applies anymore, and
+  // on the way in it clears the two things found blocking RTX HDR on a
+  // real site: near-1 opacity on the video (unblockVideo, applied even if
+  // the automatic toggle is off, since this is an explicit request) and
+  // another video playing visibly at the same time (sidelineOtherVideos,
+  // undone when fullscreen ends). Uses capture-phase listeners so it works
+  // even inside a site's own player controls.
   //
   // Alt+Shift+F, not plain Alt+F: Chrome itself owns Alt+F (opens the
   // browser's 3-dot menu) and Alt+E as menu-access accelerators — those
@@ -641,6 +748,42 @@
     return best;
   }
 
+  // Other videos the hotkey paused and hid on its way into fullscreen, put
+  // back exactly as they were once fullscreen ends. Only ones actually
+  // visible on screen — pausing hidden ones (preloaders, ad slots) could
+  // break a site's player logic for no benefit.
+  let sidelined = [];
+
+  function sidelineOtherVideos(target) {
+    for (const v of document.querySelectorAll("video")) {
+      if (v === target || v.paused) continue;
+      const r = v.getBoundingClientRect();
+      const onScreen = r.width > 0 && r.height > 0 && r.bottom > 0 && r.top < innerHeight && r.right > 0 && r.left < innerWidth;
+      if (!onScreen) continue;
+      if (v.checkVisibility && !v.checkVisibility({ checkOpacity: true, checkVisibilityCSS: true, opacityProperty: true, visibilityProperty: true })) continue;
+      sidelined.push({
+        v,
+        visibility: v.style.getPropertyValue("visibility"),
+        priority: v.style.getPropertyPriority("visibility"),
+      });
+      v.pause();
+      v.style.setProperty("visibility", "hidden", "important");
+    }
+  }
+
+  function restoreSidelined() {
+    for (const { v, visibility, priority } of sidelined) {
+      if (visibility) v.style.setProperty("visibility", visibility, priority);
+      else v.style.removeProperty("visibility");
+      v.play().catch(() => {});
+    }
+    sidelined = [];
+  }
+
+  document.addEventListener("fullscreenchange", () => {
+    if (!document.fullscreenElement) restoreSidelined();
+  });
+
   // Registered on window, not document, and as the very first capture
   // listener added in this frame: capture-phase dispatch always visits
   // window before document before anything else, so this runs before any
@@ -664,7 +807,10 @@
       }
       e.preventDefault();
       e.stopPropagation(); // don't let the page's own handler act on it too
+      unblockVideo(target);
+      sidelineOtherVideos(target);
       target.requestFullscreen().catch((err) => {
+        restoreSidelined();
         console.warn("RTX HDR Booster: fullscreen request failed", err);
       });
     },
