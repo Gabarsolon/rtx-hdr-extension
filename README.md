@@ -110,10 +110,15 @@ Worth being upfront about: RTX Video HDR most likely hooks into the GPU's real v
 
 Most CDNs don't send `Access-Control-Allow-Origin`, which normally makes a canvas "tainted" the moment you draw a cross-origin image into it — page JS just isn't allowed to read those pixels. The extension routes around this: when the fast in-page path fails, the content script asks the background service worker to fetch the image instead. Because the worker holds `host_permissions: ["<all_urls>"]`, that fetch isn't subject to CORS the way a normal page request is — the worker converts the response to a `data:` URL and hands it back, and a `data:` URL never taints a canvas. This covers the vast majority of sites now.
 
+The background fetch tries without cookies first. If the host refuses (an error, or a login page instead of the image), it retries with your cookies for that host — the same request the page itself already made to show the image. That's what makes Google Photos work: its `photos.fife.usercontent.google.com` images are only served to a logged-in browser.
+
 What still won't convert:
 - Images behind hotlink/referer-check protection that reject requests without the original page's `Referer` header (the background fetch doesn't send one)
-- Images gated behind auth cookies scoped to the site (the background fetch intentionally omits credentials, for privacy)
 - Sites that block the image request outright at the network level
+
+## Single-page apps (Google Photos etc.)
+
+Apps like Google Photos keep hold of their own `<img>` elements and keep changing them after the extension has swapped them for a video: restyling them to show, hide or animate them, pointing them at the next photo, or putting them back in the page themselves. The extension keeps following each original image: style and class changes are copied onto its video, and when the image switches to a different photo (or the app re-inserts it), the old video is thrown away and the new photo converted from scratch.
 
 ## Notes / limits
 

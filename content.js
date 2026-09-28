@@ -104,9 +104,60 @@
       exportW: img.naturalWidth,
       exportH: img.naturalHeight,
       videoEl: video,
+      originalImg: img,
     });
+    followOriginal(img, video, src);
     reportCount();
     return video;
+  }
+
+  // Single-page apps (Google Photos very much included) keep references to
+  // their own <img> elements and keep changing them after we've swapped them
+  // out: toggling class/style to show, hide or animate them, pointing them at
+  // a different photo, or putting them back in the page themselves. The img
+  // is detached by then, so none of that reaches our video on its own.
+  // Class/style changes get mirrored onto the video; a new photo (src or
+  // srcset change) or the page re-inserting the img (see scan()) throws the
+  // stale video away and converts the img again from scratch.
+  const following = new WeakMap(); // original <img> -> { video, mo, src }
+
+  function stopFollowing(img) {
+    const f = following.get(img);
+    if (!f) return;
+    f.mo.disconnect();
+    following.delete(img);
+  }
+
+  function followOriginal(img, video, src) {
+    stopFollowing(img);
+    const mo = new MutationObserver((records) => {
+      const newPicture = records.some(
+        (r) => (r.attributeName === "src" || r.attributeName === "srcset") && img.getAttribute(r.attributeName) !== r.oldValue
+      );
+      if (newPicture) {
+        redoConversion(img);
+        return;
+      }
+      video.className = img.className;
+      video.style.cssText = img.style.cssText;
+    });
+    mo.observe(img, { attributes: true, attributeOldValue: true, attributeFilter: ["class", "style", "src", "srcset"] });
+    following.set(img, { video, mo, src });
+  }
+
+  function redoConversion(img) {
+    const f = following.get(img);
+    if (!f) return;
+    stopFollowing(img);
+    const { video, src } = f;
+    if (video.srcObject) video.srcObject.getTracks().forEach((t) => t.stop());
+    if (video.isConnected && !img.isConnected) video.replaceWith(img);
+    else video.remove();
+    delete img.dataset.rtxHdrDone;
+    totalConverted = Math.max(0, totalConverted - 1);
+    setStatus(src, { status: "detected", videoEl: null });
+    reportCount();
+    attemptConvert(img);
   }
 
   function findImgBySrc(src) {
@@ -117,16 +168,18 @@
   }
 
   // Swaps a converted video back to showing the plain image, undoing
-  // doConversion(). Reuses the same drawable that was used for the
-  // original conversion (exportSource) rather than creating a new <img> —
-  // it's already fully loaded, so this is instant either way.
+  // doConversion(). Puts back the page's own original <img> (which the page
+  // may still be holding references to), not a copy — it's already loaded,
+  // so this is instant.
   function revertImage(src) {
     const entry = registry.get(src);
     if (!entry || entry.kind !== "image" || entry.status !== "converted" || !entry.videoEl || !entry.exportSource) {
       return false;
     }
     const { videoEl, exportSource } = entry;
+    const original = entry.originalImg || exportSource;
     if (!videoEl.isConnected) return false;
+    stopFollowing(original);
 
     if (videoEl.srcObject) {
       videoEl.srcObject.getTracks().forEach((t) => t.stop());
@@ -134,20 +187,22 @@
     // Undo any hiding the GIF legacy-redraw fallback may have applied, and
     // carry over whatever sizing/positioning the video ended up with so the
     // page layout doesn't jump.
-    exportSource.style.cssText = videoEl.style.cssText;
-    exportSource.style.position = "";
-    exportSource.style.opacity = "";
-    exportSource.style.pointerEvents = "";
-    exportSource.removeAttribute("aria-hidden");
-    exportSource.className = videoEl.className;
-    videoEl.replaceWith(exportSource);
+    original.style.cssText = videoEl.style.cssText;
+    original.style.position = "";
+    original.style.opacity = "";
+    original.style.pointerEvents = "";
+    original.removeAttribute("aria-hidden");
+    delete original.dataset.rtxHdrHiddenSource;
+    original.className = videoEl.className;
+    videoEl.replaceWith(original);
+    if (exportSource !== original && exportSource.dataset.rtxHdrHiddenSource) exportSource.remove();
 
-    delete exportSource.dataset.rtxHdrDone;
+    delete original.dataset.rtxHdrDone;
     // Marks this image as manually reverted so a later automatic rescan
     // (autoConvertAll, or the MutationObserver noticing the img come back)
     // doesn't immediately reconvert it right back — only an explicit
     // reconvert action should undo a revert.
-    exportSource.dataset.rtxHdrReverted = "1";
+    original.dataset.rtxHdrReverted = "1";
 
     totalConverted = Math.max(0, totalConverted - 1);
     setStatus(src, { status: "detected", videoEl: null });
@@ -160,7 +215,10 @@
   // normally applies — an explicit user action always wins.
   function reconvertImage(src) {
     const entry = registry.get(src);
-    const img = (entry && entry.exportSource && entry.exportSource.isConnected && entry.exportSource) || findImgBySrc(src);
+    const img =
+      (entry && entry.originalImg && entry.originalImg.isConnected && entry.originalImg) ||
+      (entry && entry.exportSource && entry.exportSource.isConnected && entry.exportSource) ||
+      findImgBySrc(src);
     if (!img) return false;
     delete img.dataset.rtxHdrReverted;
     delete img.dataset.rtxHdrDone;
@@ -256,6 +314,10 @@
   // continuing to animate a hidden element, which isn't guaranteed), kept
   // only as a second line of defense on browsers without WebCodecs support.
   function startLegacyRedrawLoop(sourceImg, canvas, ctx, w, h, video) {
+    // This deliberately re-inserts and restyles the img, which followOriginal
+    // and scan() would otherwise read as the page changing it.
+    stopFollowing(sourceImg);
+    sourceImg.dataset.rtxHdrHiddenSource = "1";
     sourceImg.style.position = "absolute";
     sourceImg.style.opacity = "0";
     sourceImg.style.pointerEvents = "none";
@@ -482,7 +544,15 @@
   }
 
   function scan() {
-    document.querySelectorAll("img").forEach(attemptConvert);
+    document.querySelectorAll("img").forEach((img) => {
+      // A converted img showing up in the page again means the page put it
+      // back itself (see followOriginal) — the video for it is stale now.
+      if (following.has(img) && !img.dataset.rtxHdrHiddenSource) {
+        redoConversion(img);
+        return;
+      }
+      attemptConvert(img);
+    });
     document.querySelectorAll("video").forEach(attemptDetectVideo);
   }
 

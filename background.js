@@ -20,6 +20,16 @@ function blobToDataURL(blob) {
   });
 }
 
+// Throws on anything that isn't the image itself, including a login page a
+// host sends back with a 200 when it wants cookies.
+async function fetchImage(url, credentials) {
+  const res = await fetch(url, { credentials });
+  if (!res.ok) throw new Error("HTTP " + res.status);
+  const type = res.headers.get("content-type") || "";
+  if (type.startsWith("text/")) throw new Error("got " + type.split(";")[0] + " instead of an image");
+  return res.blob();
+}
+
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (!msg) return;
 
@@ -32,9 +42,16 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg.type === "rtx-hdr-fetch-image") {
     (async () => {
       try {
-        const res = await fetch(msg.url, { credentials: "omit" });
-        if (!res.ok) throw new Error("HTTP " + res.status);
-        const blob = await res.blob();
+        let blob;
+        try {
+          blob = await fetchImage(msg.url, "omit");
+        } catch (e) {
+          // Some hosts only serve the image to a logged-in browser — Google
+          // Photos' photos.fife.usercontent.google.com, for one. Retry with
+          // the user's cookies for that host: the same request the page
+          // itself already made to display the image.
+          blob = await fetchImage(msg.url, "include");
+        }
         const dataUrl = await blobToDataURL(blob);
         sendResponse({ ok: true, dataUrl });
       } catch (err) {
