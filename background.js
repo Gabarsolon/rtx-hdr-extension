@@ -30,8 +30,31 @@ async function fetchImage(url, credentials) {
   return res.blob();
 }
 
+// Diagnostic reports per tab, one per frame, collected for the popup's
+// Diagnose button. Kept in memory only: the popup reads them a moment after
+// asking every frame for a report.
+const diagByTab = new Map();
+
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (!msg) return;
+
+  if (msg.type === "rtx-hdr-diag" && sender.tab) {
+    if (!diagByTab.has(sender.tab.id)) diagByTab.set(sender.tab.id, new Map());
+    diagByTab.get(sender.tab.id).set(sender.frameId, msg.text);
+    return;
+  }
+
+  if (msg.type === "rtx-hdr-get-diag") {
+    const m = diagByTab.get(msg.tabId);
+    sendResponse({ reports: m ? [...m.values()] : [] });
+    return;
+  }
+
+  if (msg.type === "rtx-hdr-clear-diag") {
+    diagByTab.delete(msg.tabId);
+    sendResponse({});
+    return;
+  }
 
   if (msg.type === "rtx-hdr-count" && sender.tab && sender.tab.id != null) {
     chrome.action.setBadgeText({ tabId: sender.tab.id, text: String(msg.count) });

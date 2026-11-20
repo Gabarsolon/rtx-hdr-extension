@@ -23,7 +23,10 @@
 
   const MIN_AREA = 40000; // skip tiny icons/avatars
   let totalConverted = 0;
-  let autoConvertAll = false; // toggled from the popup, persisted in chrome.storage.sync
+  let autoConvertAll = false; // toggled from the popup, persisted in chrome.storage.local
+  let convertPhotoPages = true; // popup toggle: convert a directly-opened image (a .jpg URL in its own tab)? Off = leave it plain.
+  let highlightProtectionEnabled = true; // rolls off harsh highlights to prevent blowout at 1000 nits
+  let highlightProtectionStrength = 50;
 
   // Registry of every image/video/stream we've looked at, keyed by src (or
   // a synthetic key for sourceless live streams) — powers the popup's
@@ -79,7 +82,7 @@
     }
   }
 
-  function swap(img, canvas, stream, src, exportSource) {
+  function swap(img, canvas, stream, src, exportSource, ctx, w, h) {
     const video = document.createElement("video");
     video.srcObject = stream;
     video.autoplay = true;
@@ -101,10 +104,12 @@
     setStatus(src, {
       status: "converted",
       exportSource,
-      exportW: img.naturalWidth,
-      exportH: img.naturalHeight,
+      exportW: w || img.naturalWidth,
+      exportH: h || img.naturalHeight,
       videoEl: video,
       originalImg: img,
+      canvas,
+      ctx,
     });
     followOriginal(img, video, src);
     reportCount();
@@ -233,12 +238,52 @@
     return true;
   }
 
+  function applyHighlightRolloff(ctx, sourceImg, w, h, enabled, strength) {
+    ctx.clearRect(0, 0, w, h);
+    ctx.drawImage(sourceImg, 0, 0, w, h);
+    if (!enabled || strength <= 0) return;
+
+    const knee = Math.round(195 - (strength / 100) * 35);
+    const maxVal = Math.round(255 - (strength / 100) * 60);
+    const delta = 255 - knee;
+    const diff = maxVal - knee;
+    if (diff <= 0 || delta <= diff) return;
+
+    const c = (delta - diff) / (delta * diff);
+    const lut = new Uint8Array(256);
+    for (let x = 0; x < 256; x++) {
+      if (x <= knee) {
+        lut[x] = x;
+      } else {
+        const u = x - knee;
+        lut[x] = Math.round(knee + u / (1.0 + c * u));
+      }
+    }
+
+    const imgData = ctx.getImageData(0, 0, w, h);
+    const d = imgData.data;
+    const len = d.length;
+    for (let i = 0; i < len; i += 4) {
+      d[i] = lut[d[i]];
+      d[i + 1] = lut[d[i + 1]];
+      d[i + 2] = lut[d[i + 2]];
+    }
+    ctx.putImageData(imgData, 0, 0);
+  }
+
+  function redrawAllConvertedImages() {
+    for (const [src, entry] of registry.entries()) {
+      if (entry.status === "converted" && entry.canvas && entry.ctx && entry.exportSource) {
+        applyHighlightRolloff(entry.ctx, entry.exportSource, entry.exportW, entry.exportH, highlightProtectionEnabled, highlightProtectionStrength);
+      }
+    }
+  }
+
   // Draws sourceImg into canvas and captures it. captureStream() throws
   // synchronously if the canvas got tainted (cross-origin draw without CORS
   // clearance) — that's how we detect the failure case.
   function drawAndCapture(canvas, ctx, sourceImg, w, h) {
-    ctx.clearRect(0, 0, w, h);
-    ctx.drawImage(sourceImg, 0, 0, w, h);
+    applyHighlightRolloff(ctx, sourceImg, w, h, highlightProtectionEnabled, highlightProtectionStrength);
     return canvas.captureStream(30);
   }
 
@@ -353,7 +398,7 @@
 
     try {
       const stream = drawAndCapture(canvas, ctx, img, w, h);
-      const video = swap(img, canvas, stream, src, img);
+      const video = swap(img, canvas, stream, src, img, ctx, w, h);
       if (animated) animate(src, img, canvas, ctx, w, h, video);
       return;
     } catch (e) {
@@ -382,7 +427,7 @@
         const retryCtx = retryCanvas.getContext("2d");
         try {
           const stream = drawAndCapture(retryCanvas, retryCtx, fresh, w, h);
-          const video = swap(img, retryCanvas, stream, src, fresh);
+          const video = swap(img, retryCanvas, stream, src, fresh, retryCtx, w, h);
           // resp.dataUrl is already the raw bytes as a data: URL — reuse it
           // directly instead of re-fetching src (which would just fail with
           // the same CORS error all over again).
@@ -410,7 +455,9 @@
 
     if (img.naturalWidth * img.naturalHeight < MIN_AREA) return;
 
-    const shouldConvert = isImagePage || autoConvertAll;
+    // A directly-opened photo follows its own switch (even with auto-convert on);
+    // every other page follows the auto-convert toggle.
+    const shouldConvert = isImagePage ? convertPhotoPages : autoConvertAll;
 
     if (!shouldConvert) {
       // List it for the popup, but don't mark it permanently done — if the
@@ -585,8 +632,13 @@
       return;
     }
 
+    if (msg.type === "rtx-hdr-run-diag") {
+      runDiag(false);
+      return;
+    }
+
     if (msg.type === "rtx-hdr-get-images") {
-      sendResponse({ items: Array.from(registry.values()), isImagePage, autoConvertAll });
+      sendResponse({ items: Array.from(registry.values()), isImagePage, autoConvertAll, convertPhotoPages });
       return;
     }
 
@@ -660,16 +712,53 @@
     (document.head || document.documentElement).appendChild(st);
   }
 
+  // The stylesheet rule above loses to a site's own inline `opacity: .99
+  // !important` (an inline !important beats a stylesheet !important), which is
+  // exactly what some players set. So the override is also written inline with
+  // !important, replacing the site's declaration; the earlier inline value is
+  // kept and put back on release. A style-attribute observer re-asserts it if
+  // the page writes its value again.
+  const inlineOpacity = new WeakMap(); // element -> { v, p } of its inline opacity before we touched it
+  const reassertObserver = new MutationObserver((muts) => {
+    for (const m of muts) {
+      const el = m.target;
+      if (el.hasAttribute(OPAQUE_ATTR) && parseFloat(getComputedStyle(el).opacity) < 1) {
+        el.style.setProperty("opacity", "1", "important");
+      }
+    }
+  });
+
+  function releaseOpaque(el) {
+    el.removeAttribute(OPAQUE_ATTR);
+    const prev = inlineOpacity.get(el);
+    if (prev) {
+      if (prev.v) el.style.setProperty("opacity", prev.v, prev.p);
+      else el.style.removeProperty("opacity");
+      inlineOpacity.delete(el);
+    }
+  }
+
   function unblockVideo(v) {
     for (let el = v; el && el !== document.documentElement; el = el.parentElement) {
-      if (el.hasAttribute(OPAQUE_ATTR)) continue;
       const o = parseFloat(getComputedStyle(el).opacity);
       if (o < 0.9 || o >= 1) continue;
-      ensureOpaqueStyle();
-      el.setAttribute(OPAQUE_ATTR, "");
-      if (!opaqueMarks.has(v)) opaqueMarks.set(v, []);
-      opaqueMarks.get(v).push(el);
-      console.info(`RTX HDR Booster: forced opacity ${o} -> 1 so Chrome can hand this video to RTX`, el);
+      const marked = el.hasAttribute(OPAQUE_ATTR);
+      if (!marked) {
+        ensureOpaqueStyle();
+        el.setAttribute(OPAQUE_ATTR, "");
+        inlineOpacity.set(el, { v: el.style.getPropertyValue("opacity"), p: el.style.getPropertyPriority("opacity") });
+        if (!opaqueMarks.has(v)) opaqueMarks.set(v, []);
+        opaqueMarks.get(v).push(el);
+        reassertObserver.observe(el, { attributes: true, attributeFilter: ["style"] });
+      }
+      el.style.setProperty("opacity", "1", "important");
+      const now = parseFloat(getComputedStyle(el).opacity);
+      if (!marked) {
+        console.info(`RTX HDR Booster: forced opacity ${o} -> ${now} so Chrome can hand this video to RTX`, el);
+      }
+      if (now < 1) {
+        console.warn(`RTX HDR Booster: opacity is still ${now} after forcing it (an animation or page script is overriding it)`, el);
+      }
     }
   }
 
@@ -701,18 +790,63 @@
   function clearMarksFor(v) {
     const els = opaqueMarks.get(v);
     if (!els) return;
-    for (const el of els) el.removeAttribute(OPAQUE_ATTR);
+    for (const el of els) releaseOpaque(el);
     opaqueMarks.delete(v);
   }
 
   function clearAllMarks() {
-    for (const el of document.querySelectorAll(`[${OPAQUE_ATTR}]`)) el.removeAttribute(OPAQUE_ATTR);
+    for (const el of document.querySelectorAll(`[${OPAQUE_ATTR}]`)) releaseOpaque(el);
     opaqueMarks = new WeakMap();
   }
 
   // Media events don't bubble, but capture-phase listeners on document
   // still see them for every <video> in this frame.
-  document.addEventListener("playing", () => startUnblocking(), true);
+  // One console line per video the first time it plays (after a short wait
+  // so the decoder counters and the page's own styling have settled).
+  const diagLogged = new WeakSet();
+  function logPlaying(v) {
+    if (!(v instanceof HTMLVideoElement) || diagLogged.has(v)) return;
+    diagLogged.add(v);
+    setTimeout(() => {
+      try {
+        console.info("RTX HDR Booster [diag]: " + window.RtxHdrDiag.summary(v), v);
+      } catch (err) {
+        console.warn("RTX HDR Booster [diag]: summary failed", err);
+      }
+    }, 1500);
+  }
+
+  // Full report for this frame: logged to the console, and sent to the
+  // background worker so the popup's Diagnose button can collect every
+  // frame's report (an iframe's console is easy to miss).
+  // toConsole also copies the report to the clipboard (the hotkeys are
+  // pressed in fullscreen, where the popup isn't reachable).
+  async function runDiag(toConsole) {
+    let text;
+    try {
+      text = await window.RtxHdrDiag.frameReport({ unblockVideos, autoConvertAll, convertPhotoPages });
+    } catch (err) {
+      text = "--- frame " + location.href.split("?")[0] + "\nreport failed: " + err;
+    }
+    if (!text) return;
+    if (toConsole) {
+      console.log("RTX HDR Booster [diag]\n" + text);
+      navigator.clipboard.writeText(text).then(
+        () => console.info("RTX HDR Booster [diag]: report copied to the clipboard"),
+        (err) => console.info("RTX HDR Booster [diag]: could not copy the report (" + err + "); use the popup's Diagnose button"),
+      );
+    }
+    chrome.runtime.sendMessage({ type: "rtx-hdr-diag", text }, () => void chrome.runtime.lastError);
+  }
+
+  document.addEventListener(
+    "playing",
+    (e) => {
+      startUnblocking();
+      logPlaying(e.target);
+    },
+    true
+  );
   for (const type of ["pause", "ended", "emptied"]) {
     document.addEventListener(
       type,
@@ -727,9 +861,12 @@
   // storage.local (not .sync) — sync depends on being signed into Chrome
   // sync and can lag or silently no-op if that's off; local is instant and
   // has no such dependency. Both default to on.
-  chrome.storage.local.get({ autoConvertAll: true, unblockVideos: true }, (result) => {
+  chrome.storage.local.get({ autoConvertAll: true, convertPhotoPages: true, unblockVideos: true, highlightProtection: true, highlightStrength: 50 }, (result) => {
     autoConvertAll = !!result.autoConvertAll;
+    convertPhotoPages = result.convertPhotoPages !== false;
     unblockVideos = result.unblockVideos !== false;
+    highlightProtectionEnabled = result.highlightProtection !== false;
+    highlightProtectionStrength = result.highlightStrength || 50;
     scan();
     startUnblocking(); // videos that started playing before this script attached
   });
@@ -743,6 +880,12 @@
       autoConvertAll = !!changes.autoConvertAll.newValue;
       if (autoConvertAll) scan();
     }
+    if (changes.convertPhotoPages) {
+      convertPhotoPages = changes.convertPhotoPages.newValue !== false;
+      // A directly-opened image is the whole document, so a reload is the
+      // cleanest way to get it converted or plain again.
+      if (isImagePage) location.reload();
+    }
     if (changes.unblockVideos) {
       unblockVideos = changes.unblockVideos.newValue !== false;
       if (unblockVideos) {
@@ -751,6 +894,14 @@
         stopUnblocking();
         clearAllMarks();
       }
+    }
+    if (changes.highlightProtection) {
+      highlightProtectionEnabled = changes.highlightProtection.newValue !== false;
+      redrawAllConvertedImages();
+    }
+    if (changes.highlightStrength) {
+      highlightProtectionStrength = changes.highlightStrength.newValue || 50;
+      redrawAllConvertedImages();
     }
   });
 
@@ -869,20 +1020,36 @@
     "keydown",
     (e) => {
       if (!e.altKey || !e.shiftKey || e.ctrlKey || e.metaKey) return;
-      if (e.key.toLowerCase() !== "f") return;
+      const key = e.key.toLowerCase();
+      if (key === "d") {
+        // Alt+Shift+D: print the full diagnostic report for this frame.
+        e.preventDefault();
+        e.stopPropagation();
+        runDiag(true);
+        return;
+      }
+      if (key !== "f") return;
+      console.info("RTX HDR Booster [diag]: Alt+Shift+F seen", window === window.top ? "(top frame)" : "(iframe)");
       const target = pickTargetVideo();
       if (!target) {
-        console.warn("RTX HDR Booster: Alt+Shift+F pressed but no video found (hover one, or make sure one is playing on screen)");
+        console.warn("RTX HDR Booster: Alt+Shift+F pressed but no video found in this frame (hover one, or make sure one is playing on screen; if the player is in an iframe, click it first so the key goes there)");
         return;
       }
       e.preventDefault();
       e.stopPropagation(); // don't let the page's own handler act on it too
+      console.info("RTX HDR Booster [diag]: fullscreening", window.RtxHdrDiag.describe(target), target === hoveredVideo ? "(hovered)" : "(most visible playing video)");
       unblockVideo(target);
       sidelineOtherVideos(target);
-      target.requestFullscreen().catch((err) => {
-        restoreSidelined();
-        console.warn("RTX HDR Booster: fullscreen request failed", err);
-      });
+      target.requestFullscreen().then(
+        () => {
+          console.info("RTX HDR Booster [diag]: fullscreen entered, report in 1.5 s");
+          setTimeout(() => runDiag(true), 1500);
+        },
+        (err) => {
+          restoreSidelined();
+          console.warn("RTX HDR Booster: fullscreen request failed", err);
+        }
+      );
     },
     true
   );

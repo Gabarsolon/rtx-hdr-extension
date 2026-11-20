@@ -3,12 +3,20 @@ const emptyEl = document.getElementById("empty");
 const countEl = document.getElementById("count");
 const rescanBtn = document.getElementById("rescan");
 const revertAllBtn = document.getElementById("revertAll");
+const copyListBtn = document.getElementById("copyList");
 const hintEl = document.getElementById("hint");
 const autoToggle = document.getElementById("autoToggle");
+const photoToggle = document.getElementById("photoToggle");
+const diagBtn = document.getElementById("diagBtn");
 const unblockToggle = document.getElementById("unblockToggle");
+const hlProtectToggle = document.getElementById("hlProtectToggle");
+const hlSliderRow = document.getElementById("hlSliderRow");
+const hlStrengthSlider = document.getElementById("hlStrengthSlider");
+const hlStrengthVal = document.getElementById("hlStrengthVal");
 const openLocalBtn = document.getElementById("openLocal");
 
 let activeTabId = null;
+let listedItems = []; // what the list shows right now, for the Copy button
 
 function statusLabel(item) {
   if (item.status === "converted") return { text: "HDR", cls: "converted" };
@@ -63,11 +71,13 @@ function makeRowActionBtn(label, title, msgType, src, extraClass) {
   return btn;
 }
 
-function render(items, isImagePage, autoConvertAll) {
+function render(items, isImagePage, autoConvertAll, convertPhotoPages) {
   listEl.innerHTML = "";
   emptyEl.textContent = "No images, videos, or streams detected on this tab yet.";
+  listedItems = items || [];
+  copyListBtn.disabled = !listedItems.some((i) => i.openable !== false && i.src);
 
-  const activeConversion = isImagePage || autoConvertAll;
+  const activeConversion = isImagePage ? convertPhotoPages !== false : autoConvertAll;
   hintEl.style.display = activeConversion ? "none" : "block";
 
   if (!items || items.length === 0) {
@@ -137,6 +147,22 @@ function render(items, isImagePage, autoConvertAll) {
       }
     }
 
+    if (item.openable !== false && item.src) {
+      const copyBtn = document.createElement("button");
+      copyBtn.className = "rowActionBtn";
+      copyBtn.textContent = "⧉";
+      copyBtn.title = "Copy this URL";
+      copyBtn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        navigator.clipboard.writeText(item.src).then(
+          () => { copyBtn.textContent = "✓"; },
+          (err) => { console.warn("RTX HDR Booster: copy failed", err); copyBtn.textContent = "✗"; }
+        );
+        setTimeout(() => { copyBtn.textContent = "⧉"; }, 1200);
+      });
+      li.appendChild(copyBtn);
+    }
+
     if (item.openable === false) {
       li.classList.add("not-openable");
       li.title = "No stable URL to open (live/WebRTC stream) — this is a detection-only listing.";
@@ -159,9 +185,11 @@ function loadImages() {
       emptyEl.textContent = "Can't reach this page (extension pages, chrome:// tabs, or a page loaded before install).";
       emptyEl.style.display = "block";
       listEl.innerHTML = "";
+      listedItems = [];
+      copyListBtn.disabled = true;
       return;
     }
-    render(resp && resp.items, resp && resp.isImagePage, resp && resp.autoConvertAll);
+    render(resp && resp.items, resp && resp.isImagePage, resp && resp.autoConvertAll, resp && resp.convertPhotoPages);
   });
 }
 
@@ -171,16 +199,52 @@ chrome.tabs.query({ active: true, currentWindow: true }, ([tab]) => {
   loadImages();
 });
 
-chrome.storage.local.get({ autoConvertAll: true, unblockVideos: true }, (result) => {
+chrome.storage.local.get({ autoConvertAll: true, convertPhotoPages: true, unblockVideos: true, highlightProtection: true, highlightStrength: 50 }, (result) => {
   autoToggle.checked = !!result.autoConvertAll;
+  photoToggle.checked = result.convertPhotoPages !== false;
   unblockToggle.checked = result.unblockVideos !== false;
+  if (hlProtectToggle) hlProtectToggle.checked = result.highlightProtection !== false;
+  if (hlStrengthSlider) hlStrengthSlider.value = result.highlightStrength || 50;
+  if (hlStrengthVal) hlStrengthVal.textContent = `${hlStrengthSlider.value}%`;
+  if (hlSliderRow) hlSliderRow.style.display = (hlProtectToggle && hlProtectToggle.checked) ? "flex" : "none";
 });
+
+if (hlProtectToggle) {
+  hlProtectToggle.addEventListener("change", () => {
+    const enabled = hlProtectToggle.checked;
+    if (hlSliderRow) hlSliderRow.style.display = enabled ? "flex" : "none";
+    chrome.storage.local.set({ highlightProtection: enabled }, () => {
+      if (chrome.runtime.lastError) console.warn("RTX HDR Booster: failed to save hl toggle", chrome.runtime.lastError);
+    });
+  });
+}
+
+if (hlStrengthSlider) {
+  hlStrengthSlider.addEventListener("input", () => {
+    if (hlStrengthVal) hlStrengthVal.textContent = `${hlStrengthSlider.value}%`;
+  });
+  hlStrengthSlider.addEventListener("change", () => {
+    const val = parseInt(hlStrengthSlider.value, 10);
+    chrome.storage.local.set({ highlightStrength: val }, () => {
+      if (chrome.runtime.lastError) console.warn("RTX HDR Booster: failed to save hl strength", chrome.runtime.lastError);
+    });
+  });
+}
 
 unblockToggle.addEventListener("change", () => {
   chrome.storage.local.set({ unblockVideos: unblockToggle.checked }, () => {
     if (chrome.runtime.lastError) {
       console.warn("RTX HDR Booster: failed to save toggle", chrome.runtime.lastError);
     }
+  });
+});
+
+photoToggle.addEventListener("change", () => {
+  chrome.storage.local.set({ convertPhotoPages: photoToggle.checked }, () => {
+    if (chrome.runtime.lastError) {
+      console.warn("RTX HDR Booster: failed to save toggle", chrome.runtime.lastError);
+    }
+    setTimeout(loadImages, 800); // the photo tab reloads itself first
   });
 });
 
@@ -202,6 +266,50 @@ rescanBtn.addEventListener("click", () => {
   chrome.tabs.sendMessage(activeTabId, { type: "rtx-hdr-rescan" }, () => {
     void chrome.runtime.lastError; // ignore if content script isn't present
     setTimeout(loadImages, 600);
+  });
+});
+
+// Copies the URLs of the listed images, videos and streams, one per line.
+// Stream rows with no stable URL (live/WebRTC) are left out.
+copyListBtn.addEventListener("click", () => {
+  const urls = [...new Set(listedItems.filter((i) => i.openable !== false && i.src).map((i) => i.src))];
+  if (urls.length === 0) return;
+  navigator.clipboard.writeText(urls.join("\n")).then(
+    () => {
+      copyListBtn.textContent = `Copied ${urls.length}`;
+      setTimeout(() => { copyListBtn.textContent = "Copy"; }, 1500);
+    },
+    (err) => {
+      console.warn("RTX HDR Booster: copy failed", err);
+      copyListBtn.textContent = "Copy failed";
+      setTimeout(() => { copyListBtn.textContent = "Copy"; }, 1500);
+    }
+  );
+});
+
+// Asks every frame of the tab for a diagnostic report, gathers them through
+// the background worker and copies the lot to the clipboard.
+diagBtn.addEventListener("click", () => {
+  if (activeTabId == null) return;
+  const done = (label) => {
+    diagBtn.textContent = label;
+    setTimeout(() => { diagBtn.textContent = "Diagnose"; }, 1800);
+  };
+  diagBtn.textContent = "…";
+  chrome.runtime.sendMessage({ type: "rtx-hdr-clear-diag", tabId: activeTabId }, () => {
+    void chrome.runtime.lastError;
+    chrome.tabs.sendMessage(activeTabId, { type: "rtx-hdr-run-diag" }, () => void chrome.runtime.lastError);
+    setTimeout(() => {
+      chrome.runtime.sendMessage({ type: "rtx-hdr-get-diag", tabId: activeTabId }, (resp) => {
+        void chrome.runtime.lastError;
+        const reports = (resp && resp.reports) || [];
+        if (reports.length === 0) return done("No report");
+        navigator.clipboard.writeText(reports.join("\n\n")).then(
+          () => done(`Copied (${reports.length} frame${reports.length > 1 ? "s" : ""})`),
+          () => done("Copy failed")
+        );
+      });
+    }, 900);
   });
 });
 

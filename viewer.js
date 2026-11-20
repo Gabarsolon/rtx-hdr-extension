@@ -20,9 +20,94 @@ const openFolderBtn = document.getElementById("openFolder");
 const convertAllBtn = document.getElementById("convertAll");
 const downloadHdrBtn = document.getElementById("downloadHdr");
 const toggleOriginalBtn = document.getElementById("toggleOriginal");
+const hlProtectToggle = document.getElementById("hlProtectToggle");
+const hlStrengthSlider = document.getElementById("hlStrengthSlider");
+const hlStrengthVal = document.getElementById("hlStrengthVal");
+const hlSliderContainer = document.getElementById("hlSliderContainer");
 
 let lastFolderFiles = []; // powers "back to folder" after viewing a single picture
-let currentSingle = null; // { img, name, video, showingVideo } for the picture showSingle() currently has open
+let currentSingle = null; // { img, name, video, canvas, ctx, w, h, showingVideo } for the picture showSingle() currently has open
+
+if (window.chrome && chrome.storage && chrome.storage.local) {
+  chrome.storage.local.get({ highlightProtection: true, highlightStrength: 50 }, (res) => {
+    if (hlProtectToggle) hlProtectToggle.checked = res.highlightProtection !== false;
+    if (hlStrengthSlider) hlStrengthSlider.value = res.highlightStrength || 50;
+    if (hlStrengthVal) hlStrengthVal.textContent = `${hlStrengthSlider.value}%`;
+    if (hlSliderContainer) {
+      hlSliderContainer.style.opacity = (hlProtectToggle && hlProtectToggle.checked) ? "1" : "0.4";
+    }
+    if (hlStrengthSlider && hlProtectToggle) {
+      hlStrengthSlider.disabled = !hlProtectToggle.checked;
+    }
+  });
+}
+
+function applyHighlightRolloff(ctx, sourceImg, w, h, enabled, strength) {
+  ctx.clearRect(0, 0, w, h);
+  ctx.drawImage(sourceImg, 0, 0, w, h);
+  if (!enabled || strength <= 0) return;
+
+  const knee = Math.round(195 - (strength / 100) * 35);
+  const maxVal = Math.round(255 - (strength / 100) * 60);
+  const delta = 255 - knee;
+  const diff = maxVal - knee;
+  if (diff <= 0 || delta <= diff) return;
+
+  const c = (delta - diff) / (delta * diff);
+  const lut = new Uint8Array(256);
+  for (let x = 0; x < 256; x++) {
+    if (x <= knee) {
+      lut[x] = x;
+    } else {
+      const u = x - knee;
+      lut[x] = Math.round(knee + u / (1.0 + c * u));
+    }
+  }
+
+  const imgData = ctx.getImageData(0, 0, w, h);
+  const d = imgData.data;
+  const len = d.length;
+  for (let i = 0; i < len; i += 4) {
+    d[i] = lut[d[i]];
+    d[i + 1] = lut[d[i + 1]];
+    d[i + 2] = lut[d[i + 2]];
+  }
+  ctx.putImageData(imgData, 0, 0);
+}
+
+let updateRaf = null;
+function updateSingleToneCurve() {
+  if (!currentSingle || !currentSingle.showingVideo || !currentSingle.canvas) return;
+  if (updateRaf) cancelAnimationFrame(updateRaf);
+  updateRaf = requestAnimationFrame(() => {
+    const enabled = hlProtectToggle ? hlProtectToggle.checked : true;
+    const strength = hlStrengthSlider ? parseInt(hlStrengthSlider.value, 10) : 50;
+    applyHighlightRolloff(currentSingle.ctx, currentSingle.img, currentSingle.w, currentSingle.h, enabled, strength);
+  });
+}
+
+if (hlProtectToggle) {
+  hlProtectToggle.addEventListener("change", () => {
+    if (hlSliderContainer) hlSliderContainer.style.opacity = hlProtectToggle.checked ? "1" : "0.4";
+    if (hlStrengthSlider) hlStrengthSlider.disabled = !hlProtectToggle.checked;
+    if (window.chrome && chrome.storage && chrome.storage.local) {
+      chrome.storage.local.set({ highlightProtection: hlProtectToggle.checked });
+    }
+    updateSingleToneCurve();
+  });
+}
+
+if (hlStrengthSlider) {
+  hlStrengthSlider.addEventListener("input", () => {
+    if (hlStrengthVal) hlStrengthVal.textContent = `${hlStrengthSlider.value}%`;
+    updateSingleToneCurve();
+  });
+  hlStrengthSlider.addEventListener("change", () => {
+    if (window.chrome && chrome.storage && chrome.storage.local) {
+      chrome.storage.local.set({ highlightStrength: parseInt(hlStrengthSlider.value, 10) });
+    }
+  });
+}
 
 function isImageFile(file) {
   if (file.type && file.type.startsWith("image/")) return true;
@@ -62,7 +147,9 @@ function convertToVideo(sourceImg) {
   canvas.width = w;
   canvas.height = h;
   const ctx = canvas.getContext("2d");
-  ctx.drawImage(sourceImg, 0, 0, w, h);
+  const enabled = hlProtectToggle ? hlProtectToggle.checked : true;
+  const strength = hlStrengthSlider ? parseInt(hlStrengthSlider.value, 10) : 50;
+  applyHighlightRolloff(ctx, sourceImg, w, h, enabled, strength);
   const stream = canvas.captureStream(30);
 
   const video = document.createElement("video");
@@ -72,7 +159,7 @@ function convertToVideo(sourceImg) {
   video.loop = true;
   video.playsInline = true;
   video.play().catch(() => {});
-  return video;
+  return { video, canvas, ctx, w, h };
 }
 
 function showSingle(file) {
@@ -94,13 +181,13 @@ function showSingle(file) {
   const url = URL.createObjectURL(file);
   const probe = new Image();
   probe.onload = () => {
-    const video = convertToVideo(probe);
+    const { video, canvas, ctx, w, h } = convertToVideo(probe);
     URL.revokeObjectURL(url);
     singleMediaEl.appendChild(video);
     requestVideoFullscreen(video);
     // probe stays fully usable after revoking its blob URL — once an <img>
     // has decoded, the bitmap lives with the element, not the URL.
-    currentSingle = { img: probe, name: file.name, video, showingVideo: true };
+    currentSingle = { img: probe, name: file.name, video, canvas, ctx, w, h, showingVideo: true };
     downloadHdrBtn.style.display = "inline-block";
     toggleOriginalBtn.style.display = "inline-block";
     toggleOriginalBtn.textContent = "Show Original Image";
@@ -126,9 +213,13 @@ toggleOriginalBtn.addEventListener("click", () => {
     toggleOriginalBtn.textContent = "Convert to HDR Video";
   } else {
     // Re-convert: build a fresh video from the same already-loaded image.
-    const video = convertToVideo(currentSingle.img);
+    const { video, canvas, ctx, w, h } = convertToVideo(currentSingle.img);
     currentSingle.img.replaceWith(video);
     currentSingle.video = video;
+    currentSingle.canvas = canvas;
+    currentSingle.ctx = ctx;
+    currentSingle.w = w;
+    currentSingle.h = h;
     currentSingle.showingVideo = true;
     toggleOriginalBtn.textContent = "Show Original Image";
   }
@@ -208,7 +299,7 @@ function convertCell(cell, img) {
   }
   cell.dataset.converted = "1";
   const url = img.src;
-  const video = convertToVideo(img);
+  const { video } = convertToVideo(img);
   img.replaceWith(video);
   URL.revokeObjectURL(url);
 

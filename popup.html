@@ -79,7 +79,7 @@
   }
   .switch input:checked + .slider { background: #4d7c1f; }
   .switch input:checked + .slider::before { transform: translateX(14px); background: #a9e34b; }
-  button#rescan, button#openLocal, button#revertAll {
+  button#rescan, button#openLocal, button#revertAll, button#copyList, button#diagBtn {
     background: #2a2d34;
     color: #e6e6e6;
     border: 1px solid #3a3d44;
@@ -88,8 +88,9 @@
     font-size: 12px;
     cursor: pointer;
   }
-  button#rescan:hover, button#openLocal:hover, button#revertAll:hover { background: #34373f; }
-  button#rescan:active, button#openLocal:active, button#revertAll:active { transform: translateY(1px); }
+  button#rescan:hover, button#openLocal:hover, button#revertAll:hover, button#copyList:hover, button#diagBtn:hover { background: #34373f; }
+  button#rescan:active, button#openLocal:active, button#revertAll:active, button#copyList:active, button#diagBtn:active { transform: translateY(1px); }
+  button#copyList:disabled { opacity: 0.5; cursor: default; }
   ul#list {
     list-style: none;
     margin: 0;
@@ -188,6 +189,7 @@
   <header>
     <h1>RTX HDR Image Booster</h1>
     <div class="actions">
+      <button id="copyList" title="Copy the URLs of every listed image, video and stream (one per line)">Copy</button>
       <button id="revertAll">Revert All</button>
       <button id="rescan">Rescan</button>
     </div>
@@ -199,6 +201,13 @@
       <span class="slider"></span>
     </label>
   </div>
+  <div class="toggle-row" title="When you open a photo directly (a .jpg / .png / .webp URL in its own tab), turn it into HDR video. Off = photos open plain and RTX HDR isn't applied to them. Doesn't affect the other switches.">
+    <label for="photoToggle">Convert photos opened directly</label>
+    <label class="switch">
+      <input type="checkbox" id="photoToggle" />
+      <span class="slider"></span>
+    </label>
+  </div>
   <div class="toggle-row" title="Some sites make their video 99% opaque, which stops Chrome from handing it to RTX Video HDR. This makes playing videos fully opaque again (no visible difference).">
     <label for="unblockToggle">Unblock RTX HDR on site videos</label>
     <label class="switch">
@@ -206,8 +215,20 @@
       <span class="slider"></span>
     </label>
   </div>
+  <div class="toggle-row" title="Smoothly compresses harsh highlights (>180) to prevent outdoor sunlight and phone photos from blowing out under 1000 nits Gamma22.">
+    <label for="hlProtectToggle">Highlight Protection (anti-blowout)</label>
+    <label class="switch">
+      <input type="checkbox" id="hlProtectToggle" />
+      <span class="slider"></span>
+    </label>
+  </div>
+  <div class="toggle-row" id="hlSliderRow" style="display:none; padding: 6px 12px 8px; background: #13151a;">
+    <span style="font-size: 11.5px; color: #8b8f98;">Strength: <span id="hlStrengthVal" style="color: #a9e34b; font-weight: 600;">50%</span></span>
+    <input type="range" id="hlStrengthSlider" min="10" max="100" value="50" step="5" style="accent-color: #a9e34b; cursor: pointer; width: 130px;" />
+  </div>
   <div class="toggle-row">
     <span>Open a picture or folder from your PC</span>
+    <button id="diagBtn" title="Collect a report on why RTX Video HDR/VSR may not engage on this tab's videos (every frame) and copy it">Diagnose</button>
     <button id="openLocal">Open…</button>
   </div>
   <div id="hint">Images here are only <strong>listed</strong>, not converted — open one directly (click a row) to actually HDR-ify it, or flip the toggle above to convert everywhere automatically. Videos and streams are already real video, so they're just listed for you to open — dimmed stream rows have no stable URL (live/WebRTC) and can't be opened.</div>

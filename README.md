@@ -5,6 +5,7 @@ Two modes, depending on the tab — plus a popup toggle to collapse them into on
 - **Regular page** (embeds `<img>` tags among other content): images are only *detected* and listed in the popup — nothing is converted by default. Click a row to open that image directly in a new tab.
 - **Direct image tab** (you navigated straight to an image URL, or opened one via right-click → "Open image in new tab" — Chrome renders its built-in single-image viewer, `document.contentType` starts with `image/`): the image gets swapped for a `<video>` element backed by a live `canvas.captureStream()` of it. Since it's a real `<video>`, RTX Video HDR (which only watches for video elements) picks it up and tone-maps it.
 - **"Auto-convert on every page" toggle** in the popup: **on by default** — converts on sight everywhere, same as direct image tabs. Flip it off if you want the click-to-open-then-convert flow instead. Persisted via `chrome.storage.local` and applies live to already-open tabs without a reload.
+- **"Convert photos opened directly" toggle** in the popup: **on by default**. Turn it off and a photo opened in its own tab (a `.jpg` / `.png` / `.webp` URL) is left plain, so RTX HDR isn't applied to it, even with auto-convert on. The photo tab reloads when you flip it. Other pages follow the auto-convert toggle as before.
 - **"Unblock RTX HDR on site videos" toggle** in the popup: **on by default** — undoes the invisible 99%-opacity trick some sites use that stops RTX Video HDR from engaging on their own videos (see [below](#unblocking-rtx-hdr-on-sites-own-videos)).
 
 ## Install (unpacked, since it's not on the Chrome Web Store)
@@ -32,7 +33,7 @@ Local files never need the CORS-bypass path — a `blob:` URL from a file you pi
 
 ## Use
 
-Click the toolbar icon any time to open the popup — it lists every sufficiently large image, video, *and stream* detected on the current tab: thumbnail, dimensions, an `IMG`/`VID`/`STREAM` kind tag, and (for images) a status badge — `found` on a regular page / `HDR` converted / `blocked` / `pending` on a direct image tab (hover a `blocked` badge for the reason). Videos and streams only get the kind tag — they're already real video, so there's nothing to convert, they're just listed so you can see/open them. Click any row to open that item directly in a new tab, except dimmed stream rows with no stable URL (see below). The popup's **Rescan** button forces a fresh detection pass.
+Click the toolbar icon any time to open the popup — it lists every sufficiently large image, video, *and stream* detected on the current tab: thumbnail, dimensions, an `IMG`/`VID`/`STREAM` kind tag, and (for images) a status badge — `found` on a regular page / `HDR` converted / `blocked` / `pending` on a direct image tab (hover a `blocked` badge for the reason). Videos and streams only get the kind tag — they're already real video, so there's nothing to convert, they're just listed so you can see/open them. Click any row to open that item directly in a new tab, except dimmed stream rows with no stable URL (see below). The popup's **Rescan** button forces a fresh detection pass, and **Copy** puts the URLs of every listed image, video and stream on the clipboard, one per line (stream rows with no stable URL are left out). Each row's **⧉** button copies just that item's URL.
 
 ### What counts as a "stream"
 
@@ -79,11 +80,20 @@ The gain-map/container format is an intricate spec (`hdr-export.js` builds the X
 
 RTX Video HDR never looks at the page itself. Chrome only passes a video's frames through the NVIDIA driver when it gives that video its own hardware layer (a DirectComposition overlay) instead of drawing it as part of the page. Anything that makes Chrome draw the video as ordinary page content means RTX never sees it, no matter how "real" the video is or whether it's hardware-decoded.
 
-One cause, confirmed on a real site's player: the site set `opacity: 0.99` on its `<video>`. That's invisible to the eye, but Chrome won't give a video that isn't fully opaque its own layer. Forcing it back to 1 made RTX HDR engage.
+One cause, confirmed on a real site's player: the site set `opacity: 0.99` on its `<video>`. That's invisible to the eye, but Chrome won't give a video that isn't fully opaque its own layer. Forcing it back to 1 made RTX HDR engage. (Some players set it inline with `!important`, which beats a stylesheet override, so the extension writes `opacity: 1 !important` inline on the element, keeps the page's earlier inline value to put back, and re-applies it if the page writes its own again. The report's `Diagnose` output says whether forcing took effect.)
 
 The **"Unblock RTX HDR on site videos"** toggle in the popup (**on by default**) does that automatically. While a video plays, the video and any container around it with an opacity between 0.9 and 1 are forced fully opaque, with no visible difference. Lower opacities are left alone, since those are real fades or deliberately hidden videos. The override comes off when the video pauses or ends, so a site's own fades still work. Each fix is logged to the page's console (`RTX HDR Booster: forced opacity ...`).
 
 Other things that keep a video off its own layer, which the toggle doesn't touch: `filter`, `clip-path`/`mask`, or a rotate/3D transform on the video or its containers; a blurred (`backdrop-filter`) or blend-mode element on top of it; and another video playing on screen at the same time. Alt+Shift+F (below) gets around all of these.
+
+## Diagnostics: why RTX Video HDR / VSR doesn't engage
+
+- **Console line:** the first time a video plays, the page console shows one `RTX HDR Booster [diag]` line: stream size, DRM (EME), decoded/dropped frames, and any CSS blockers found on the video, its ancestors, or elements drawn over it.
+- **Alt+Shift+F** now logs what it did: which frame got the key, which video it picked, whether fullscreen was granted, then a full report 1.5 s later.
+- **Alt+Shift+D** prints the full report for the frame that has focus and copies it to the clipboard (Alt+Shift+F's report is copied too). The report lists the codec strings the player gave `MediaSource` (a small passive recorder, `mse-spy.js`, notes them; the page's own call is unchanged) and asks Chrome whether it can decode each in hardware. It covers the video's source and size, DRM, decoder counters, whether Chrome sees an HDR display, blocking CSS (opacity, filter, backdrop-filter, clip-path, mask, blend mode, rotate/3D transform, will-change, rounded corners with overflow clip), things covering the video, several videos playing at once, and canvas-drawn players.
+- **Diagnose** (popup footer) asks every frame of the tab, iframes included, for that report and copies them together to the clipboard. URLs in it are cut to origin + path.
+
+Nothing here changes the page. If no `<video>` is found but there is a big canvas, the player draws its own frames, and RTX can't see those.
 
 ## Fullscreen hotkey for any video (Alt+Shift+F)
 

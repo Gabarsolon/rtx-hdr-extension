@@ -125,6 +125,17 @@
     <span class="backlink" id="backToGrid">← Back to folder</span>
     <div id="singleMedia"></div>
     <div class="fshint">Didn't go fullscreen automatically? Double-click the video to toggle it.</div>
+    <div id="hlControlBar" style="margin: 14px auto; max-width: 480px; background: #1c1f26; border: 1px solid #2a2d34; border-radius: 8px; padding: 10px 16px; display: flex; align-items: center; justify-content: space-between; gap: 12px;">
+      <label style="display: flex; align-items: center; gap: 8px; cursor: pointer; user-select: none; font-size: 13px; font-weight: 500; color: #cfd2d8;">
+        <input type="checkbox" id="hlProtectToggle" style="accent-color: #a9e34b; cursor: pointer; width: 16px; height: 16px;" checked />
+        Highlight Protection (Anti-Blowout)
+      </label>
+      <div id="hlSliderContainer" style="display: flex; align-items: center; gap: 8px;">
+        <span style="font-size: 12px; color: #8b8f98;">Strength:</span>
+        <input type="range" id="hlStrengthSlider" min="10" max="100" value="50" step="5" style="accent-color: #a9e34b; cursor: pointer; width: 100px;" />
+        <span id="hlStrengthVal" style="font-size: 12px; color: #a9e34b; min-width: 32px; text-align: right; font-weight: 600;">50%</span>
+      </div>
+    </div>
     <div>
       <button class="downloadHdr" id="toggleOriginal">Show Original Image</button>
       <button class="downloadHdr" id="downloadHdr">Download HDR (.jpg)</button>
