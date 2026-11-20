@@ -84,6 +84,8 @@ One cause, confirmed on a real site's player: the site set `opacity: 0.99` on it
 
 The **"Unblock RTX HDR on site videos"** toggle in the popup (**on by default**) does that automatically. While a video plays, the video and any container around it with an opacity between 0.9 and 1 are forced fully opaque, with no visible difference. Lower opacities are left alone, since those are real fades or deliberately hidden videos. The override comes off when the video pauses or ends, so a site's own fades still work. Each fix is logged to the page's console (`RTX HDR Booster: forced opacity ...`).
 
+Two more blockers get the same treatment while the video plays. A filter that changes nothing (for example `saturate(1) contrast(1) brightness(1)`, which mega.nz's player writes for its colour settings; any value other than `none` still forces composition) is overridden with `filter: none`. Rounded corners on the video, or on a container that clips it, are set to square corners. A filter that really changes the picture is left alone.
+
 Other things that keep a video off its own layer, which the toggle doesn't touch: `filter`, `clip-path`/`mask`, or a rotate/3D transform on the video or its containers; a blurred (`backdrop-filter`) or blend-mode element on top of it; and another video playing on screen at the same time. Alt+Shift+F (below) gets around all of these.
 
 ## Diagnostics: why RTX Video HDR / VSR doesn't engage

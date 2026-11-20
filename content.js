@@ -738,7 +738,92 @@
     }
   }
 
+  // Two more things that keep a video off the overlay path without changing
+  // how it looks: a filter that does nothing (e.g. Mega's player writes
+  // `saturate(1) contrast(1) brightness(1)` for its colour settings, and any
+  // value other than `none` still forces composition), and rounded corners
+  // on the video or on an ancestor that clips it. Both are overridden inline
+  // with !important while the video plays, the earlier inline value is kept
+  // and put back on release, and an observer re-asserts it if the page
+  // rewrites its own value. A filter that really changes the picture is left
+  // alone.
+  const FIX_ATTR = "data-rtx-hdr-fixed";
+  const fixSaved = new WeakMap(); // element -> Map(prop -> { v, p, want })
+  let fixMarks = new WeakMap(); // video -> elements fixed on its behalf
+  const fixObserver = new MutationObserver((muts) => {
+    for (const m of muts) {
+      const el = m.target;
+      const saved = fixSaved.get(el);
+      if (!saved) continue;
+      for (const [prop, s] of saved) {
+        if (el.style.getPropertyValue(prop) !== s.want || el.style.getPropertyPriority(prop) !== "important") {
+          el.style.setProperty(prop, s.want, "important");
+        }
+      }
+    }
+  });
+
+  function forceInline(v, el, prop, want, label) {
+    let saved = fixSaved.get(el);
+    if (!saved) {
+      saved = new Map();
+      fixSaved.set(el, saved);
+      el.setAttribute(FIX_ATTR, "");
+      fixObserver.observe(el, { attributes: true, attributeFilter: ["style"] });
+      if (!fixMarks.has(v)) fixMarks.set(v, []);
+      fixMarks.get(v).push(el);
+    }
+    if (!saved.has(prop)) {
+      saved.set(prop, { v: el.style.getPropertyValue(prop), p: el.style.getPropertyPriority(prop), want });
+      console.info(`RTX HDR Booster: overriding ${label} so Chrome can hand this video to RTX`, el);
+    }
+    el.style.setProperty(prop, want, "important");
+  }
+
+  function releaseFixed(el) {
+    const saved = fixSaved.get(el);
+    el.removeAttribute(FIX_ATTR);
+    if (!saved) return;
+    for (const [prop, s] of saved) {
+      if (s.v) el.style.setProperty(prop, s.v, s.p);
+      else el.style.removeProperty(prop);
+    }
+    fixSaved.delete(el);
+  }
+
+  // True for a computed filter whose every function leaves the picture as is.
+  function isIdentityFilter(f) {
+    if (!f || f === "none") return false;
+    const re = /([a-z-]+)\(([^)]*)\)/g;
+    let m, n = 0;
+    while ((m = re.exec(f))) {
+      n++;
+      const name = m[1];
+      const raw = m[2].trim();
+      const val = parseFloat(raw);
+      if (Number.isNaN(val)) return false;
+      const x = raw.endsWith("%") ? val / 100 : val;
+      if (name === "saturate" || name === "contrast" || name === "brightness" || name === "opacity") {
+        if (x !== 1) return false;
+      } else if (name === "blur" || name === "hue-rotate" || name === "grayscale" || name === "sepia" || name === "invert") {
+        if (x !== 0) return false;
+      } else return false;
+    }
+    return n > 0;
+  }
+
+  function fixFilterAndCorners(v) {
+    for (let el = v; el && el !== document.documentElement; el = el.parentElement) {
+      const cs = getComputedStyle(el);
+      if (isIdentityFilter(cs.filter)) forceInline(v, el, "filter", "none", `filter ${cs.filter}`);
+      const rounded = ["borderTopLeftRadius", "borderTopRightRadius", "borderBottomLeftRadius", "borderBottomRightRadius"]
+        .some((k) => parseFloat(cs[k]) > 0);
+      if (rounded && (el === v || cs.overflow !== "visible")) forceInline(v, el, "border-radius", "0", "rounded corners");
+    }
+  }
+
   function unblockVideo(v) {
+    fixFilterAndCorners(v);
     for (let el = v; el && el !== document.documentElement; el = el.parentElement) {
       const o = parseFloat(getComputedStyle(el).opacity);
       if (o < 0.9 || o >= 1) continue;
@@ -788,6 +873,11 @@
   }
 
   function clearMarksFor(v) {
+    const fixed = fixMarks.get(v);
+    if (fixed) {
+      for (const el of fixed) releaseFixed(el);
+      fixMarks.delete(v);
+    }
     const els = opaqueMarks.get(v);
     if (!els) return;
     for (const el of els) releaseOpaque(el);
@@ -796,7 +886,9 @@
 
   function clearAllMarks() {
     for (const el of document.querySelectorAll(`[${OPAQUE_ATTR}]`)) releaseOpaque(el);
+    for (const el of document.querySelectorAll(`[${FIX_ATTR}]`)) releaseFixed(el);
     opaqueMarks = new WeakMap();
+    fixMarks = new WeakMap();
   }
 
   // Media events don't bubble, but capture-phase listeners on document
